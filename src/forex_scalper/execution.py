@@ -82,6 +82,21 @@ class Broker(ABC):
     def open_trades(self) -> list[OpenTrade]:
         ...
 
+    @abstractmethod
+    def modify_stop(
+        self, trade_id: str, new_stop: float, *, instrument: str | None = None
+    ) -> bool:
+        """
+        Update the stop-loss price on a live position.
+
+        Returns True on success, False if the trade is unknown or the request
+        fails non-fatally. A failed trailing-stop update is non-fatal — the
+        original stop remains at the broker.
+
+        MONEY-SAFETY: single request, no retry (consistent with
+        place_market_order / close_trade).
+        """
+
 
 class PaperBroker(Broker):
     """
@@ -128,6 +143,15 @@ class PaperBroker(Broker):
 
     def open_trades(self) -> list[OpenTrade]:
         return list(self._trades.values())
+
+    def modify_stop(
+        self, trade_id: str, new_stop: float, *, instrument: str | None = None
+    ) -> bool:
+        t = self._trades.get(trade_id)
+        if t is None:
+            return False
+        t.stop_price = new_stop
+        return True
 
 
 class OandaBroker(Broker):
@@ -333,3 +357,41 @@ class OandaBroker(Broker):
                 )
             )
         return out
+
+    def modify_stop(
+        self, trade_id: str, new_stop: float, *, instrument: str | None = None
+    ) -> bool:
+        """
+        Update the stop-loss on a live OANDA position via TradeCRCDO.
+
+        MONEY-SAFETY: single request, no retry. A failed trailing-stop update
+        is non-fatal — the original stop remains at the broker.
+        """
+        import oandapyV20.endpoints.trades as v20_trades
+
+        fmt_instrument = instrument or ""
+        data: dict[str, Any] = {
+            "stopLoss": {
+                "price": _fmt_price(fmt_instrument, new_stop),
+                "timeInForce": "GTC",
+            }
+        }
+        req = v20_trades.TradeCRCDO(
+            accountID=self._account_id, tradeID=trade_id, data=data
+        )
+        try:
+            resp = self._client.request(req)  # single call — no retry
+        except V20Error as exc:
+            logger.error(
+                "modify_stop FAILED trade_id=%s new_stop=%s error=%r — original stop unchanged at broker",
+                trade_id, new_stop, exc,
+            )
+            return False
+
+        if "stopLossOrderTransaction" not in resp:
+            logger.warning(
+                "modify_stop: unexpected response (no stopLossOrderTransaction) trade_id=%s resp=%r",
+                trade_id, resp,
+            )
+            return False
+        return True

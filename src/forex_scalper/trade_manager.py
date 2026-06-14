@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from forex_scalper.execution import Broker, OpenTrade
 from forex_scalper.models import pip_size
@@ -39,8 +39,8 @@ class TradeManager:
         self.cfg = cfg
         self.broker = broker
 
-    def manage(self, now: datetime = None) -> None:
-        now = now or datetime.now(timezone.utc)
+    def manage(self, now: datetime | None = None) -> None:
+        now = now or datetime.now(UTC)
         for t in self.broker.open_trades():
             self._manage_one(t, now)
 
@@ -63,5 +63,5 @@ class TradeManager:
             improves = (new_stop > t.stop_price) if t.units > 0 else (new_stop < t.stop_price)
             if improves:
                 t.stop_price = new_stop
-                # TODO(live): push the modified stop to the broker (trades.TradeCRCDO)
+                self.broker.modify_stop(t.trade_id, new_stop, instrument=t.instrument)
                 logger.debug("Trail %s -> stop %.5f", t.trade_id, new_stop)
