@@ -369,6 +369,26 @@ class OandaBroker(Broker):
             )
         return out
 
+    def closed_trade_pnl(self, trade_id: str) -> float | None:
+        """Realized P&L of a CLOSED trade, or None if the trade is not closed
+        (still open) or unknown. Used to reconcile broker-side SL/TP closes."""
+        import oandapyV20.endpoints.trades as v20_trades
+
+        req = v20_trades.TradeDetails(accountID=self._account_id, tradeID=trade_id)
+        try:
+            resp = self._request_with_retry(req)
+        except V20Error as exc:
+            logger.warning(
+                "closed_trade_pnl: could not fetch trade_id=%s error=%r — returning None",
+                trade_id, exc,
+            )
+            return None
+
+        trade = resp["trade"]
+        if trade["state"] == "CLOSED":
+            return float(trade["realizedPL"])
+        return None
+
     def fetch_candles(
         self, instrument: str, timeframe: str, count: int = 200
     ) -> list[Candle]:

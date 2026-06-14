@@ -26,6 +26,7 @@ from forex_scalper.execution import Broker
 from forex_scalper.journal import Journal, JournalRow
 from forex_scalper.models import SetupSignal, pip_size
 from forex_scalper.notifier import ConsoleNotifier, Notifier
+from forex_scalper.persistence import Repository
 from forex_scalper.risk_manager import RiskConfig, RiskManager, TradeSignal
 from forex_scalper.session import SessionFilter
 from forex_scalper.trade_manager import TradeManager
@@ -35,11 +36,12 @@ logger = logging.getLogger("bot")
 
 class ScalpBot:
     def __init__(self, cfg: BotConfig, market: MarketState, broker: Broker,
-                 notifier: Optional[Notifier] = None):
+                 notifier: Optional[Notifier] = None, repo: Repository | None = None):
         self.cfg = cfg
         self.market = market
         self.broker = broker
         self.notifier = notifier or ConsoleNotifier()
+        self.repo = repo
         self.journal = Journal(cfg.journal_path)
         self.session = SessionFilter(cfg.session)
         self.trades = TradeManager(cfg.trade, broker)
@@ -101,6 +103,9 @@ class ScalpBot:
             self.journal.log(base); return
 
         self.risk.register_fill(sig.instrument, sig.direction, decision.risk_amount)
+
+        if self.repo is not None:
+            self.repo.record_open(trade, direction=sig.direction, risk_amount=decision.risk_amount)
 
         base.event = "open"
         base.stop = decision.stop_price; base.take_profit = round(tp, 5)

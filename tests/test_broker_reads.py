@@ -90,3 +90,15 @@ def test_account_summary_missing_open_trade_count_defaults_to_zero():
     b = OandaBroker(account_id="X", token="T", client=FakeClient([resp]))
     s = b.account_summary()
     assert s.open_trade_count == 0
+
+
+def test_closed_trade_pnl_returns_realized_for_closed():
+    resp = {"trade": {"state": "CLOSED", "realizedPL": "7.50"}}
+    b = OandaBroker(account_id="X", token="T", client=FakeClient([resp]))
+    assert b.closed_trade_pnl("101") == 7.50
+
+
+def test_closed_trade_pnl_none_when_open():
+    resp = {"trade": {"state": "OPEN", "realizedPL": "0.0"}}
+    b = OandaBroker(account_id="X", token="T", client=FakeClient([resp]))
+    assert b.closed_trade_pnl("101") is None
