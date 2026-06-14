@@ -19,9 +19,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List
 
-import indicators as ind
-from data import MarketState
-from models import Regime
+from forex_scalper import indicators as ind
+from forex_scalper.data import MarketState
+from forex_scalper.models import Regime
 
 
 @dataclass

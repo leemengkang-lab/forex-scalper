@@ -17,18 +17,18 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-import bias as bias_mod
-import regime as regime_mod
-import setups as setups_mod
-from config import BotConfig
-from data import MarketState
-from execution import Broker
-from journal import Journal, JournalRow
-from models import SetupSignal, pip_size
-from notifier import ConsoleNotifier, Notifier
-from risk_manager import RiskConfig, RiskManager, TradeSignal
-from session import SessionFilter
-from trade_manager import TradeManager
+from forex_scalper import bias as bias_mod
+from forex_scalper import regime as regime_mod
+from forex_scalper import setups as setups_mod
+from forex_scalper.config import BotConfig
+from forex_scalper.data import MarketState
+from forex_scalper.execution import Broker
+from forex_scalper.journal import Journal, JournalRow
+from forex_scalper.models import SetupSignal, pip_size
+from forex_scalper.notifier import ConsoleNotifier, Notifier
+from forex_scalper.risk_manager import RiskConfig, RiskManager, TradeSignal
+from forex_scalper.session import SessionFilter
+from forex_scalper.trade_manager import TradeManager
 
 logger = logging.getLogger("bot")
 

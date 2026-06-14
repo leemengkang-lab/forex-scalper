@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from data import MarketState
-from models import Bias
+from forex_scalper.data import MarketState
+from forex_scalper.models import Bias
 
 
 @dataclass
@@ -55,5 +55,5 @@ def get_bias(market: MarketState, instrument: str, cfg: BiasConfig) -> Bias:
 
 
 def _ema_at(closes, period):
-    import indicators as ind
+    from forex_scalper import indicators as ind
     return ind.ema(closes, period)

@@ -11,14 +11,14 @@ Run from inside the package folder:  python demo_smoke.py
 import logging
 from datetime import datetime, timedelta, timezone
 
-import bias as bias_mod
-import regime as regime_mod
-import setups as setups_mod
-from bot import ScalpBot
-from config import BotConfig
-from data import MarketState
-from execution import PaperBroker
-from models import Candle
+from forex_scalper import bias as bias_mod
+from forex_scalper import regime as regime_mod
+from forex_scalper import setups as setups_mod
+from forex_scalper.bot import ScalpBot
+from forex_scalper.config import BotConfig
+from forex_scalper.data import MarketState
+from forex_scalper.execution import PaperBroker
+from forex_scalper.models import Candle
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(name)s | %(message)s")
 

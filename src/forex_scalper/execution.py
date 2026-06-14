@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
-from models import pip_size
+from forex_scalper.models import pip_size
 
 logger = logging.getLogger("execution")
 

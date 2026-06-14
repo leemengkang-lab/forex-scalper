@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from models import Candle
+from forex_scalper.models import Candle
 
 
 def ema(values: List[float], period: int) -> Optional[float]:

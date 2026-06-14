@@ -13,12 +13,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List
 
-from bias import BiasConfig
-from regime import RegimeConfig
-from risk_manager import DEFAULT_USD_SIGN, RiskConfig
-from session import SessionConfig
-from setups import SetupConfig
-from trade_manager import TradeManagerConfig
+from forex_scalper.bias import BiasConfig
+from forex_scalper.regime import RegimeConfig
+from forex_scalper.risk_manager import DEFAULT_USD_SIGN, RiskConfig
+from forex_scalper.session import SessionConfig
+from forex_scalper.setups import SetupConfig
+from forex_scalper.trade_manager import TradeManagerConfig
 
 
 @dataclass

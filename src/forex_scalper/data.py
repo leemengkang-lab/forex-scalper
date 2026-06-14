@@ -17,8 +17,8 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from typing import Deque, Dict, List, Optional
 
-import indicators as ind
-from models import Candle, pip_size
+from forex_scalper import indicators as ind
+from forex_scalper.models import Candle, pip_size
 
 MAXLEN = 500  # how many candles to keep per (instrument, timeframe)
 

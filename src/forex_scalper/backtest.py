@@ -28,14 +28,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
-import bias as bias_mod
-import regime as regime_mod
-import setups as setups_mod
-from bot import ScalpBot
-from config import BotConfig
-from data import MarketState
-from execution import Broker, OpenTrade
-from models import Candle, pip_size
+from forex_scalper import bias as bias_mod
+from forex_scalper import regime as regime_mod
+from forex_scalper import setups as setups_mod
+from forex_scalper.bot import ScalpBot
+from forex_scalper.config import BotConfig
+from forex_scalper.data import MarketState
+from forex_scalper.execution import Broker, OpenTrade
+from forex_scalper.models import Candle, pip_size
 
 logging.basicConfig(level=logging.WARNING)  # quiet during replay
 

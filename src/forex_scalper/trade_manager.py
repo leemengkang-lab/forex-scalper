@@ -18,8 +18,8 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from execution import Broker, OpenTrade
-from models import pip_size
+from forex_scalper.execution import Broker, OpenTrade
+from forex_scalper.models import pip_size
 
 logger = logging.getLogger("trade_manager")
 
