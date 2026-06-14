@@ -1,0 +1,46 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Runtime state
+data/
+journal.csv
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Plots
+*.png
+*.svg
+!docs/**/*.png
+!docs/**/*.svg
