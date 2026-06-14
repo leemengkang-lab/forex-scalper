@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from forex_scalper.bot import ScalpBot
+from forex_scalper.calendar_feed import load_into_session
 from forex_scalper.config import BotConfig
 from forex_scalper.data import MarketState
 from forex_scalper.execution import OandaBroker, PaperBroker  # noqa: F401 (re-exported for tests)
@@ -185,6 +186,7 @@ async def run_live(
     repo: Any | None = None,
     reconciler: Any | None = None,
     starting_balance: float | None = None,
+    news_csv: str | None = None,
 ) -> None:
     """Run the live trading loop until stopped.
 
@@ -197,6 +199,10 @@ async def run_live(
       reconciler       — pre-built PositionReconciler (takes precedence over auto-build).
       starting_balance — explicit starting balance; auto-fetched from account_summary()
                          when None and broker supports it.
+      news_csv         — path to a CSV of red-folder news events (instrument,time).
+                         Loaded into bot.session via SessionFilter.set_events so the
+                         bot goes flat around those events.  None = skip.  A load
+                         failure is non-fatal and never aborts startup.
 
     Raises FatalStreamError if the price stream dies unrecoverably (so the
     caller/systemd can restart the process).
@@ -265,6 +271,15 @@ async def run_live(
     except Exception as exc:
         notifier.send(f"startup reconcile failed (non-fatal): {exc}")
         log.warning("run_live: reconcile_on_startup raised", exc_info=True)
+
+    # --- news calendar --------------------------------------------------------
+    if news_csv is not None:
+        try:
+            n = load_into_session(bot.session, news_csv)
+            notifier.send(f"loaded {n} news events from {news_csv}")
+        except Exception as exc:
+            notifier.send(f"news calendar load failed (non-fatal): {exc}")
+            log.warning("run_live: load_into_session raised", exc_info=True)
 
     notifier.send(
         f"live runner started — environment={environment} "
@@ -384,6 +399,9 @@ def main() -> None:
 
     Path("data").mkdir(exist_ok=True)
 
+    _news_csv_default = "config/news_events.csv"
+    news_csv: str | None = _news_csv_default if Path(_news_csv_default).exists() else None
+
     asyncio.run(
         run_live(
             cfg,
@@ -394,6 +412,7 @@ def main() -> None:
             tradeable=tradeable,
             max_runtime_seconds=args.max_runtime_seconds,
             db_path="data/bot.db",
+            news_csv=news_csv,
             # starting_balance left as None so it is auto-fetched from account_summary()
         )
     )
