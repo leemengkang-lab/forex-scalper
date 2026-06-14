@@ -5,8 +5,7 @@ Broker abstraction so the bot logic never touches a vendor SDK directly.
 
   * Broker        — the interface every broker must implement.
   * PaperBroker   — in-memory fills for demo / shadow mode. Runs with no creds.
-  * OandaBroker   — stub showing exactly where to call the v20 API. The import
-                    is lazy so the rest of the bot runs without oandapyV20.
+  * OandaBroker   — live OANDA v20 adapter. Uses oandapyV20 0.7.2.
 
 The bot calls: get_price, place_market_order, close_trade, open_trades.
 """
@@ -15,14 +14,40 @@ from __future__ import annotations
 
 import itertools
 import logging
+import uuid
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any
+
+import requests
+from oandapyV20.exceptions import V20Error  # type: ignore[import-untyped]
 
 from forex_scalper.models import pip_size
 
 logger = logging.getLogger("execution")
+
+# ---------------------------------------------------------------------------
+# Retry configuration (reads only — NOT used for mutations)
+# ---------------------------------------------------------------------------
+_RETRY_HTTP_CODES: frozenset[int] = frozenset({401, 500, 502, 503, 504})
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    return isinstance(exc, (requests.Timeout, requests.ConnectionError)) or (
+        isinstance(exc, V20Error) and getattr(exc, "code", None) in _RETRY_HTTP_CODES
+    )
+
+
+# ---------------------------------------------------------------------------
+# Price formatting helper
+# ---------------------------------------------------------------------------
+
+def _fmt_price(instrument: str, price: float) -> str:
+    """Format a price to 3 dp for JPY pairs, 5 dp otherwise."""
+    if pip_size(instrument) == 0.01:
+        return f"{price:.3f}"
+    return f"{price:.5f}"
 
 
 @dataclass
@@ -39,20 +64,20 @@ class OpenTrade:
 
 class Broker(ABC):
     @abstractmethod
-    def get_price(self, instrument: str) -> Tuple[float, float]:
+    def get_price(self, instrument: str) -> tuple[float, float]:
         """(bid, ask)."""
 
     @abstractmethod
     def place_market_order(self, instrument: str, units: int, stop: float,
-                           take_profit: float, setup: str = "") -> Optional[OpenTrade]:
+                           take_profit: float, setup: str = "") -> OpenTrade | None:
         ...
 
     @abstractmethod
-    def close_trade(self, trade_id: str) -> Optional[float]:
+    def close_trade(self, trade_id: str) -> float | None:
         """Returns realised P&L in account ccy, or None if not found."""
 
     @abstractmethod
-    def open_trades(self) -> List[OpenTrade]:
+    def open_trades(self) -> list[OpenTrade]:
         ...
 
 
@@ -62,30 +87,32 @@ class PaperBroker(Broker):
     backtest / shadow run is fully reproducible. P&L is computed from the
     pip_value you provide per instrument.
     """
-    def __init__(self, pip_value: Dict[str, float]):
-        self._prices: Dict[str, Tuple[float, float]] = {}
+    def __init__(self, pip_value: dict[str, float]):
+        self._prices: dict[str, tuple[float, float]] = {}
         self._pip_value = pip_value
-        self._trades: Dict[str, OpenTrade] = {}
+        self._trades: dict[str, OpenTrade] = {}
         self._ids = itertools.count(1)
 
     def set_price(self, instrument: str, bid: float, ask: float) -> None:
         self._prices[instrument] = (bid, ask)
 
-    def get_price(self, instrument: str) -> Tuple[float, float]:
+    def get_price(self, instrument: str) -> tuple[float, float]:
         return self._prices[instrument]
 
-    def place_market_order(self, instrument, units, stop, take_profit, setup="") -> Optional[OpenTrade]:
+    def place_market_order(
+        self, instrument: str, units: int, stop: float, take_profit: float, setup: str = ""
+    ) -> OpenTrade | None:
         bid, ask = self._prices[instrument]
         fill = ask if units > 0 else bid       # pay the spread, like real life
         tid = f"P{next(self._ids)}"
         t = OpenTrade(tid, instrument, units, fill, stop, take_profit,
-                      datetime.now(timezone.utc), setup)
+                      datetime.now(UTC), setup)
         self._trades[tid] = t
         logger.info("PAPER fill %s %s %+d @ %.5f (sl %.5f tp %.5f)",
                     tid, instrument, units, fill, stop, take_profit)
         return t
 
-    def close_trade(self, trade_id: str) -> Optional[float]:
+    def close_trade(self, trade_id: str) -> float | None:
         t = self._trades.pop(trade_id, None)
         if not t:
             return None
@@ -97,35 +124,188 @@ class PaperBroker(Broker):
         logger.info("PAPER close %s pnl=%.2f (%.1f pips)", trade_id, pnl, pips)
         return pnl
 
-    def open_trades(self) -> List[OpenTrade]:
+    def open_trades(self) -> list[OpenTrade]:
         return list(self._trades.values())
 
 
 class OandaBroker(Broker):
     """
-    Live OANDA v20 broker. Fill in the TODOs with oandapyV20 calls. Lazy import
-    keeps the package runnable without the SDK installed.
+    Live OANDA v20 broker adapter.
+
+    Inject a `client` in tests to avoid any real network/truststore setup.
+    In production, leave `client=None` and the real oandapyV20.API is created.
+
+    MONEY-SAFETY: place_market_order and close_trade are single-request
+    (no retry) because a lost response after a real fill + retry = double
+    position. Only reads (get_price, open_trades) use _request_with_retry.
     """
-    def __init__(self, account_id: str, token: str, practice: bool = True):
-        from oandapyV20 import API  # lazy
-        env = "practice" if practice else "live"
-        self.account_id = account_id
-        self.api = API(access_token=token, environment=env)
 
-    def get_price(self, instrument: str) -> Tuple[float, float]:
-        # TODO: pricing.PricingInfo -> return (bid, ask)
-        raise NotImplementedError
+    def __init__(
+        self,
+        account_id: str,
+        token: str,
+        practice: bool = True,
+        *,
+        client: Any = None,
+    ) -> None:
+        self._account_id = account_id
+        self._sleeps: tuple[float, ...] = (1.0, 2.0, 4.0)
 
-    def place_market_order(self, instrument, units, stop, take_profit, setup="") -> Optional[OpenTrade]:
-        # TODO: orders.OrderCreate with a MARKET order + stopLossOnFill +
-        # takeProfitOnFill. Parse the fill into an OpenTrade. Make it idempotent
-        # (use a client order id) so a retry never double-fires.
-        raise NotImplementedError
+        if client is not None:
+            # Test seam: use provided fake/mock client directly.
+            self._client = client
+        else:
+            # Production: inject OS cert store, then build real API client.
+            try:
+                import truststore
+                truststore.inject_into_ssl()
+            except Exception:
+                pass
 
-    def close_trade(self, trade_id: str) -> Optional[float]:
-        # TODO: trades.TradeClose -> parse realizedPL
-        raise NotImplementedError
+            import oandapyV20  # type: ignore[import-untyped]
+            env = "practice" if practice else "live"
+            self._client = oandapyV20.API(access_token=token, environment=env)
 
-    def open_trades(self) -> List[OpenTrade]:
-        # TODO: trades.OpenTrades -> map to OpenTrade list
-        raise NotImplementedError
+    # ------------------------------------------------------------------
+    # Internal: retrying wrapper (reads only)
+    # ------------------------------------------------------------------
+
+    def _request_with_retry(self, req: Any) -> dict[str, Any]:
+        import time
+        max_attempts = len(self._sleeps) + 1
+        for attempt in range(1, max_attempts + 1):
+            try:
+                result: dict[str, Any] = self._client.request(req)
+                return result
+            except Exception as exc:
+                if not _is_retryable(exc) or attempt == max_attempts:
+                    raise
+                sleep_s = self._sleeps[attempt - 1]
+                logger.warning(
+                    "broker.retry attempt=%d next_sleep=%.1f error=%r",
+                    attempt, sleep_s, exc,
+                )
+                time.sleep(sleep_s)
+        raise AssertionError("unreachable")  # for type checker
+
+    # ------------------------------------------------------------------
+    # Broker interface
+    # ------------------------------------------------------------------
+
+    def get_price(self, instrument: str) -> tuple[float, float]:
+        """Return (bid, ask) — retryable read."""
+        import oandapyV20.endpoints.pricing as v20_pricing  # type: ignore[import-untyped]
+        req = v20_pricing.PricingInfo(
+            accountID=self._account_id, params={"instruments": instrument}
+        )
+        resp = self._request_with_retry(req)
+        p = resp["prices"][0]
+        return (float(p["bids"][0]["price"]), float(p["asks"][0]["price"]))
+
+    def place_market_order(
+        self,
+        instrument: str,
+        units: int,
+        stop: float,
+        take_profit: float,
+        setup: str = "",
+    ) -> OpenTrade | None:
+        """
+        Place a MARKET FOK order with attached SL/TP.
+
+        MONEY-SAFETY: single request, no retry.
+        Returns None on rejection (logs reason at WARNING).
+        """
+        import oandapyV20.endpoints.orders as v20_orders  # type: ignore[import-untyped]
+
+        idempotency_id = uuid.uuid4().hex
+        body: dict[str, Any] = {
+            "order": {
+                "instrument": instrument,
+                "units": str(int(units)),
+                "type": "MARKET",
+                "timeInForce": "FOK",
+                "positionFill": "DEFAULT",
+                "stopLossOnFill": {"price": _fmt_price(instrument, stop)},
+                "takeProfitOnFill": {"price": _fmt_price(instrument, take_profit)},
+                "clientExtensions": {"id": idempotency_id},
+            }
+        }
+        req = v20_orders.OrderCreate(accountID=self._account_id, data=body)
+        resp = self._client.request(req)  # single call — no retry
+
+        fill = resp.get("orderFillTransaction")
+        if fill is None:
+            reject = resp.get("orderRejectTransaction", {})
+            reason = reject.get("rejectReason", "unknown")
+            logger.warning("broker: order rejected reason=%s", reason)
+            return None
+
+        trade_opened = fill["tradeOpened"]
+        opened_at = datetime.fromisoformat(
+            fill["time"].replace("Z", "+00:00")
+        ).astimezone(UTC)
+        return OpenTrade(
+            trade_id=str(trade_opened["tradeID"]),
+            instrument=instrument,
+            units=int(units),
+            entry_price=float(fill["price"]),
+            stop_price=float(stop),
+            take_profit=float(take_profit),
+            opened_at=opened_at,
+            setup=setup,
+        )
+
+    def close_trade(self, trade_id: str) -> float | None:
+        """
+        Close a trade by ID.
+
+        MONEY-SAFETY: single request, no retry.
+        Returns realised P&L (float) or None if fill not found / trade gone.
+        """
+        import oandapyV20.endpoints.trades as v20_trades  # type: ignore[import-untyped]
+
+        req = v20_trades.TradeClose(accountID=self._account_id, tradeID=trade_id)
+        try:
+            resp = self._client.request(req)  # single call — no retry
+        except V20Error as exc:
+            logger.warning("broker: close_trade failed trade_id=%s error=%r", trade_id, exc)
+            return None
+
+        fill = resp.get("orderFillTransaction")
+        if fill is None:
+            logger.warning("broker: close_trade no fill in response trade_id=%s", trade_id)
+            return None
+
+        return float(fill["tradesClosed"][0]["realizedPL"])
+
+    def open_trades(self) -> list[OpenTrade]:
+        """Return all open trades — retryable read."""
+        import oandapyV20.endpoints.trades as v20_trades
+
+        req = v20_trades.OpenTrades(accountID=self._account_id)
+        resp = self._request_with_retry(req)
+        out: list[OpenTrade] = []
+        for t in resp.get("trades", []):
+            opened_at = datetime.fromisoformat(
+                t["openTime"].replace("Z", "+00:00")
+            ).astimezone(UTC)
+            stop_price = (
+                float(t["stopLossOrder"]["price"]) if "stopLossOrder" in t else 0.0
+            )
+            take_profit = (
+                float(t["takeProfitOrder"]["price"]) if "takeProfitOrder" in t else 0.0
+            )
+            out.append(
+                OpenTrade(
+                    trade_id=str(t["id"]),
+                    instrument=t["instrument"],
+                    units=int(t["currentUnits"]),
+                    entry_price=float(t["price"]),
+                    stop_price=stop_price,
+                    take_profit=take_profit,
+                    opened_at=opened_at,
+                    setup="",
+                )
+            )
+        return out
