@@ -18,6 +18,7 @@ import logging
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 
 from forex_scalper.bot import ScalpBot
 from forex_scalper.config import BotConfig
@@ -168,12 +169,15 @@ class LiveEngine:
         rate_refresh_secs: float = 30.0,
         now_monotonic: Callable[[], float] = time.monotonic,
         now_utc: Callable[[], datetime] = lambda: datetime.now(UTC),
+        reconciler: Any | None = None,
     ) -> None:
         market.set_account_ccy(account_ccy)
 
         self.market = market
+        self.broker = broker
         self._bot = bot
         self._tradeable: set[str] = set(tradeable)
+        self._reconciler = reconciler
 
         # Per-instrument resamplers (only for tradeable instruments).
         self._r15: dict[str, CandleResampler] = {
@@ -211,6 +215,17 @@ class LiveEngine:
             )
 
     def _process(self, ev: StreamEvent, *, now: datetime | None) -> None:
+        # Reconcile broker-side closes BEFORE the trading pipeline so that
+        # freed heat / armed kill-switch take effect before any new entry.
+        if self._reconciler is not None:
+            try:
+                self._reconciler.sync(self.broker, now=now or self._now_utc())
+            except Exception:
+                log.warning(
+                    "LiveEngine: reconciler.sync raised; skipping for this candle",
+                    exc_info=True,
+                )
+
         # Always update price + 1M candle regardless of tradeability.
         self.market.set_price(ev.instrument, ev.bid, ev.ask)
         self.market.add_candle(ev.instrument, "1M", ev.candle)

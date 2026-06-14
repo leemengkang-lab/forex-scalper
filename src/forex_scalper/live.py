@@ -27,6 +27,7 @@ import math
 import os
 import threading
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,8 @@ from forex_scalper.data import MarketState
 from forex_scalper.execution import OandaBroker, PaperBroker  # noqa: F401 (re-exported for tests)
 from forex_scalper.live_engine import LiveEngine
 from forex_scalper.notifier import ConsoleNotifier, Notifier
+from forex_scalper.persistence import Repository
+from forex_scalper.reconcile import PositionReconciler
 from forex_scalper.stream import MultiInstrumentStream, StreamEvent
 from forex_scalper.warmup import warm_up
 
@@ -178,11 +181,22 @@ async def run_live(
     notifier: Notifier | None = None,
     watchdog_interval: float = 60.0,
     warmup: bool = True,
+    db_path: str = ":memory:",
+    repo: Any | None = None,
+    reconciler: Any | None = None,
+    starting_balance: float | None = None,
 ) -> None:
     """Run the live trading loop until stopped.
 
-    Injectable seams (broker, stream, market, notifier) allow tests to drive
-    the runner with no real network calls and a bounded runtime.
+    Injectable seams (broker, stream, market, notifier, repo, reconciler) allow
+    tests to drive the runner with no real network calls and a bounded runtime.
+
+    New optional params (all have safe defaults so existing callers are unaffected):
+      db_path          — SQLite path for the Repository; default ":memory:" (in-process).
+      repo             — pre-built Repository (takes precedence over db_path).
+      reconciler       — pre-built PositionReconciler (takes precedence over auto-build).
+      starting_balance — explicit starting balance; auto-fetched from account_summary()
+                         when None and broker supports it.
 
     Raises FatalStreamError if the price stream dies unrecoverably (so the
     caller/systemd can restart the process).
@@ -202,7 +216,34 @@ async def run_live(
         except Exception as exc:
             notifier.send(f"warm-up failed (non-fatal): {exc}")
 
-    bot = ScalpBot(cfg, market, broker, notifier)
+    # --- persistence + bot ---------------------------------------------------
+    repo = repo or Repository(db_path)
+    bot = ScalpBot(cfg, market, broker, notifier, repo=repo)
+
+    # --- starting balance -----------------------------------------------------
+    # Auto-fetch from the broker when not provided and broker supports it.
+    # Direct attribute assignment is the documented startup init path.
+    if starting_balance is None:
+        _acct_summary = getattr(broker, "account_summary", None)
+        if _acct_summary is not None:
+            try:
+                starting_balance = _acct_summary().balance
+            except Exception as exc:
+                log.warning("run_live: could not fetch account_summary for balance: %r", exc)
+
+    if starting_balance is not None:
+        bot.risk.balance = starting_balance  # startup init — direct assignment is intentional
+        bot.risk._day_start_balance = starting_balance  # startup init — private attr access is intentional
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
+        repo.upsert_day(today, starting_balance)
+
+    # --- reconciler -----------------------------------------------------------
+    get_closed_pnl = getattr(broker, "closed_trade_pnl", lambda _tid: None)
+    reconciler = reconciler or PositionReconciler(
+        repo, bot.risk, get_closed_pnl=get_closed_pnl
+    )
+
+    # --- engine ---------------------------------------------------------------
     engine = LiveEngine(
         cfg,
         market,
@@ -210,7 +251,20 @@ async def run_live(
         bot,
         account_ccy=account_ccy,
         tradeable=list(tradeable),
+        reconciler=reconciler,
     )
+
+    # --- startup reconcile ----------------------------------------------------
+    try:
+        summary = reconciler.reconcile_on_startup(broker)
+        notifier.send(
+            f"reconciled: closed={len(summary.closed)} "
+            f"rebuilt_open={summary.rebuilt_open} "
+            f"halt_restored={summary.halt_restored}"
+        )
+    except Exception as exc:
+        notifier.send(f"startup reconcile failed (non-fatal): {exc}")
+        log.warning("run_live: reconcile_on_startup raised", exc_info=True)
 
     notifier.send(
         f"live runner started — environment={environment} "
@@ -328,6 +382,8 @@ def main() -> None:
     cfg = BotConfig()
     tradeable = cfg.instruments
 
+    Path("data").mkdir(exist_ok=True)
+
     asyncio.run(
         run_live(
             cfg,
@@ -337,6 +393,8 @@ def main() -> None:
             account_ccy=account_ccy,
             tradeable=tradeable,
             max_runtime_seconds=args.max_runtime_seconds,
+            db_path="data/bot.db",
+            # starting_balance left as None so it is auto-fetched from account_summary()
         )
     )
 

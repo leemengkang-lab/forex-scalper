@@ -297,3 +297,65 @@ async def test_run_live_processes_trigger_and_stops_on_max_runtime() -> None:
     all_msgs = " ".join(notifier.messages)
     assert "live runner started" in all_msgs
     assert "live runner stopped" in all_msgs
+
+
+# ---------------------------------------------------------------------------
+# Test 4: run_live with PaperBroker does not crash (getattr fallback for
+# closed_trade_pnl and account_summary)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_run_live_paper_broker_no_crash() -> None:
+    """run_live must not crash when broker is a PaperBroker that has neither
+    closed_trade_pnl nor account_summary.  The getattr fallback must kick in
+    silently and the runner must complete cleanly within max_runtime_seconds.
+    """
+    from datetime import time as dtime
+
+    from forex_scalper.session import SessionConfig
+
+    cfg = BotConfig(
+        starting_balance=10_000.0,
+        session=SessionConfig(
+            start_utc=dtime(0, 0),
+            end_utc=dtime(23, 59),
+        ),
+    )
+
+    market = build_market()
+    ev, broker = _make_trigger_event(market)
+
+    # PaperBroker has neither closed_trade_pnl nor account_summary;
+    # run_live must handle both gracefully via getattr.
+    assert not hasattr(broker, "closed_trade_pnl"), "PaperBroker must NOT have closed_trade_pnl"
+    assert not hasattr(broker, "account_summary"), "PaperBroker must NOT have account_summary"
+
+    fake_stream = _FakeStream([ev])
+    notifier = CaptureNotifier()
+
+    # Must return cleanly with no exception.
+    await run_live(
+        cfg,
+        token="fake-token",
+        account_id="fake-account",
+        environment="practice",
+        account_ccy="SGD",
+        tradeable=[INSTR],
+        max_runtime_seconds=0.5,
+        broker=broker,
+        stream=fake_stream,   # type: ignore[arg-type]
+        market=market,
+        notifier=notifier,
+        watchdog_interval=60.0,
+        warmup=False,
+    )
+
+    fake_stream._stop_event.set()
+
+    all_msgs = " ".join(notifier.messages)
+    assert "live runner started" in all_msgs
+    assert "live runner stopped" in all_msgs
+    # reconcile summary must appear (empty state — no positions to reconcile)
+    assert "reconciled:" in all_msgs, (
+        f"Expected reconcile notification in messages, got: {notifier.messages}"
+    )

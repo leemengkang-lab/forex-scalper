@@ -179,3 +179,97 @@ def test_engine_processes_trigger_candle_and_opens_trade():
     assert len(trades) == 1, (
         f"Expected exactly 1 open trade but got {len(trades)}: {trades}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Reconciler integration: broker-side SL close is detected each candle
+# ---------------------------------------------------------------------------
+
+def test_engine_reconciles_broker_close_each_event(tmp_path):
+    """LiveEngine with a reconciler routes a broker-side close to risk on the
+    next event, so daily_pnl and repo reflect the broker-fired SL.
+
+    Steps:
+      1. Process the trigger event -> opens a paper trade, persisted in repo,
+         risk heat > 0.
+      2. Simulate SL firing: clear the paper broker's open trades so
+         open_trades() returns empty, and wire get_closed_pnl to return -120.0.
+      3. Process a second event -> reconciler.sync detects the gap, routes the
+         close through risk (daily_pnl == -120.0) and repo (open_trades == []).
+    """
+    from forex_scalper.persistence import Repository
+    from forex_scalper.reconcile import PositionReconciler
+
+    cfg = BotConfig(starting_balance=10_000.0)
+    market = build_market()
+
+    # Pop the trigger candle so we can deliver it via the engine.
+    trigger = market._c[INSTR]["1M"].pop()
+
+    broker = PaperBroker(pip_value={INSTR: PV})
+    bid, ask = market._bid[INSTR], market._ask[INSTR]
+    broker.set_price(INSTR, bid, ask)
+
+    repo = Repository(str(tmp_path / "test.db"))
+
+    # Build bot with the same repo so on_candle_close persists the open trade.
+    bot = ScalpBot(cfg, market, broker, repo=repo)
+
+    # Build reconciler using the same risk manager the bot owns.
+    reconciler = PositionReconciler(
+        repo,
+        bot.risk,
+        get_closed_pnl=lambda tid: -120.0,
+    )
+
+    engine = LiveEngine(
+        cfg,
+        market,
+        broker,
+        bot,
+        account_ccy="SGD",
+        tradeable=[INSTR],
+        rate_refresh_secs=0,
+        reconciler=reconciler,
+    )
+
+    now = datetime(2025, 1, 6, 13, 30, tzinfo=UTC)
+
+    # Step 1: deliver trigger candle -> trade opens, persisted.
+    ev1 = StreamEvent(INSTR, trigger, bid, ask)
+    engine.process_event(ev1, now=now)
+
+    trades = broker.open_trades()
+    assert len(trades) == 1, f"Step 1: expected 1 open trade, got {trades}"
+    assert len(repo.open_trades()) == 1, "Step 1: repo should have 1 open trade"
+    assert bot.risk.gross_heat > 0, "Step 1: heat should be > 0 after fill"
+
+    # Step 2: simulate SL firing at broker — clear broker-side trades.
+    broker._trades.clear()  # type: ignore[attr-defined]
+    assert broker.open_trades() == [], "Step 2: broker must report no open trades"
+
+    # Step 3: deliver a second (benign) event -> reconciler.sync fires first.
+    # Reuse the same trigger candle shape; the bot won't re-enter (duplicate guard).
+    from datetime import timedelta
+
+    from forex_scalper.models import Candle
+    dummy_candle = Candle(
+        now + timedelta(minutes=1),
+        trigger.open,
+        trigger.high,
+        trigger.low,
+        trigger.close,
+        complete=True,
+    )
+    ev2 = StreamEvent(INSTR, dummy_candle, bid, ask)
+    engine.process_event(ev2, now=now + timedelta(minutes=1))
+
+    # The reconciler must have detected the close and routed it through risk.
+    assert bot.risk.daily_pnl == -120.0, (
+        f"Expected daily_pnl == -120.0, got {bot.risk.daily_pnl}"
+    )
+    assert repo.open_trades() == [], (
+        f"Expected repo to have 0 open trades after reconcile, got {repo.open_trades()}"
+    )
+
+    repo.close()
