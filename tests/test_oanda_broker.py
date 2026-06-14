@@ -7,6 +7,12 @@ real oandapyV20.API / truststore / network setup.
 """
 from __future__ import annotations
 
+import logging
+
+import pytest
+import requests
+from oandapyV20.exceptions import V20Error
+
 from forex_scalper.execution import OandaBroker, OpenTrade
 
 
@@ -116,3 +122,36 @@ def test_get_price_returns_bid_ask():
     resp = {"prices": [{"bids": [{"price": "1.08495"}], "asks": [{"price": "1.08505"}]}]}
     b = _broker([resp])
     assert b.get_price("EUR_USD") == (1.08495, 1.08505)
+
+
+def test_close_trade_real_v20error_reraises():
+    class ErrClient:
+        def request(self, req):
+            raise V20Error(400, "TRADE_REJECT")
+    b = OandaBroker(account_id="X", token="T", practice=True, client=ErrClient())
+    with pytest.raises(V20Error):
+        b.close_trade("999")
+
+
+def test_close_trade_404_returns_none(caplog):
+    class GoneClient:
+        def request(self, req):
+            raise V20Error(404, "NO_SUCH_TRADE")
+    b = OandaBroker(account_id="X", token="T", practice=True, client=GoneClient())
+    with caplog.at_level(logging.INFO, logger="execution"):
+        assert b.close_trade("999") is None
+    assert "999" in caplog.text
+
+
+def test_get_price_retries_then_succeeds():
+    class FlakyClient:
+        def __init__(self): self.n = 0
+        def request(self, req):
+            self.n += 1
+            if self.n == 1:
+                raise requests.ConnectionError("boom")
+            return {"prices":[{"bids":[{"price":"1.10000"}],"asks":[{"price":"1.10010"}]}]}
+    b = OandaBroker(account_id="X", token="T", practice=True, client=FlakyClient())
+    b._sleeps = (0.0, 0.0, 0.0)   # no real sleeping in test
+    assert b.get_price("EUR_USD") == (1.10000, 1.10010)
+    assert b._client.n == 2

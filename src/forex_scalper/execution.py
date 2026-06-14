@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -30,7 +31,7 @@ logger = logging.getLogger("execution")
 # ---------------------------------------------------------------------------
 # Retry configuration (reads only — NOT used for mutations)
 # ---------------------------------------------------------------------------
-_RETRY_HTTP_CODES: frozenset[int] = frozenset({401, 500, 502, 503, 504})
+_RETRY_HTTP_CODES: frozenset[int] = frozenset({500, 502, 503, 504})
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -45,6 +46,7 @@ def _is_retryable(exc: BaseException) -> bool:
 
 def _fmt_price(instrument: str, price: float) -> str:
     """Format a price to 3 dp for JPY pairs, 5 dp otherwise."""
+    # pip_size returns exactly 0.01 (JPY pairs) or 0.0001 — equality is safe here
     if pip_size(instrument) == 0.01:
         return f"{price:.3f}"
     return f"{price:.5f}"
@@ -159,8 +161,12 @@ class OandaBroker(Broker):
             try:
                 import truststore
                 truststore.inject_into_ssl()
-            except Exception:
-                pass
+            except ImportError:
+                pass  # optional dependency not installed
+            except Exception as exc:
+                logger.warning(
+                    "truststore.inject_into_ssl() failed; using default ssl cert store: %r", exc
+                )
 
             import oandapyV20  # type: ignore[import-untyped]
             env = "practice" if practice else "live"
@@ -171,7 +177,6 @@ class OandaBroker(Broker):
     # ------------------------------------------------------------------
 
     def _request_with_retry(self, req: Any) -> dict[str, Any]:
-        import time
         max_attempts = len(self._sleeps) + 1
         for attempt in range(1, max_attempts + 1):
             try:
@@ -199,7 +204,10 @@ class OandaBroker(Broker):
             accountID=self._account_id, params={"instruments": instrument}
         )
         resp = self._request_with_retry(req)
-        p = resp["prices"][0]
+        prices = resp.get("prices", [])
+        if not prices:
+            raise ValueError(f"get_price: no price data for {instrument!r}")
+        p = prices[0]
         return (float(p["bids"][0]["price"]), float(p["asks"][0]["price"]))
 
     def place_market_order(
@@ -241,7 +249,13 @@ class OandaBroker(Broker):
             logger.warning("broker: order rejected reason=%s", reason)
             return None
 
-        trade_opened = fill["tradeOpened"]
+        trade_opened = fill.get("tradeOpened")
+        if trade_opened is None:
+            logger.error(
+                "orderFillTransaction missing tradeOpened: instrument=%s units=%s fill=%r",
+                instrument, units, fill,
+            )
+            raise ValueError(f"unexpected fill response for {instrument}: no tradeOpened")
         opened_at = datetime.fromisoformat(
             fill["time"].replace("Z", "+00:00")
         ).astimezone(UTC)
@@ -269,15 +283,25 @@ class OandaBroker(Broker):
         try:
             resp = self._client.request(req)  # single call — no retry
         except V20Error as exc:
-            logger.warning("broker: close_trade failed trade_id=%s error=%r", trade_id, exc)
-            return None
+            if getattr(exc, "code", None) == 404:
+                logger.info("close_trade: trade already gone trade_id=%s", trade_id)
+                return None
+            logger.error(
+                "close_trade FAILED for live trade trade_id=%s error=%r — position may still be open",
+                trade_id, exc,
+            )
+            raise
 
         fill = resp.get("orderFillTransaction")
         if fill is None:
             logger.warning("broker: close_trade no fill in response trade_id=%s", trade_id)
             return None
 
-        return float(fill["tradesClosed"][0]["realizedPL"])
+        trades_closed = fill.get("tradesClosed", [])
+        if not trades_closed:
+            logger.error("close_trade: empty tradesClosed trade_id=%s fill=%r", trade_id, fill)
+            return None
+        return float(trades_closed[0]["realizedPL"])
 
     def open_trades(self) -> list[OpenTrade]:
         """Return all open trades — retryable read."""
