@@ -43,6 +43,9 @@ from forex_scalper.reconcile import PositionReconciler
 from forex_scalper.stream import MultiInstrumentStream, StreamEvent
 from forex_scalper.warmup import warm_up
 
+# Telegram helpers are imported lazily inside build_telegram_app / run_live
+# to keep the import chain clean when enable_telegram=False (default).
+
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -164,6 +167,30 @@ async def _watchdog(
 
 
 # ---------------------------------------------------------------------------
+# Telegram application builder (lazy; NOT exercised by unit tests)
+# ---------------------------------------------------------------------------
+
+def _build_telegram_live_app(tg_token: str, repo: Any, risk: Any, broker: Any) -> Any:
+    """Construct a python-telegram-bot Application wired to TelegramCommands.
+
+    Lazy-imports telegram_control (which lazy-imports the telegram package) so
+    the default path (enable_telegram=False) never touches those imports.
+
+    NOTE: Application polling is covered by manual smoke testing with a real
+    token, not by unit tests.
+    """
+    from forex_scalper.telegram_control import (  # noqa: PLC0415
+        TelegramCommands,
+        allowed_chat_ids_from_env,
+        build_telegram_app,
+    )
+
+    allowed = allowed_chat_ids_from_env()
+    commands = TelegramCommands(repo, risk, broker, allowed)
+    return build_telegram_app(tg_token, commands)
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 
@@ -187,6 +214,7 @@ async def run_live(
     reconciler: Any | None = None,
     starting_balance: float | None = None,
     news_csv: str | None = None,
+    enable_telegram: bool = False,
 ) -> None:
     """Run the live trading loop until stopped.
 
@@ -203,10 +231,23 @@ async def run_live(
                          Loaded into bot.session via SessionFilter.set_events so the
                          bot goes flat around those events.  None = skip.  A load
                          failure is non-fatal and never aborts startup.
+      enable_telegram  — when True AND TELEGRAM_BOT_TOKEN is in env, starts
+                         python-telegram-bot polling for /halt /resume /status
+                         /positions.  Default False so all tests and CI are
+                         unaffected.  The Application polling path is covered by
+                         manual smoke testing with a real token, not by unit tests.
 
     Raises FatalStreamError if the price stream dies unrecoverably (so the
     caller/systemd can restart the process).
     """
+    # --- Telegram outbound notifier (opt-in; default path is unchanged) ------
+    # When enable_telegram is True and a token is present, swap ConsoleNotifier
+    # for TelegramNotifier so alerts reach the operator's phone.
+    tg_token = os.environ.get("TELEGRAM_BOT_TOKEN", "") if enable_telegram else ""
+    if enable_telegram and tg_token and notifier is None:
+        from forex_scalper.telegram_control import notifier_from_env  # noqa: PLC0415
+        notifier = notifier_from_env()
+
     notifier = notifier or ConsoleNotifier()
     market = market or MarketState()
     broker = broker or OandaBroker(
@@ -259,6 +300,22 @@ async def run_live(
         tradeable=list(tradeable),
         reconciler=reconciler,
     )
+
+    # --- Telegram inbound polling (opt-in; NOT exercised by unit tests) -------
+    # The Application polling path is covered by manual smoke testing with a
+    # real token, not by unit tests.
+    tg_app: Any | None = None
+    if enable_telegram and tg_token:
+        try:
+            tg_app = _build_telegram_live_app(tg_token, repo, bot.risk, broker)
+            await tg_app.initialize()
+            await tg_app.start()
+            if tg_app.updater is not None:
+                await tg_app.updater.start_polling()
+            log.info("Telegram polling started")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Telegram polling failed to start: %r", exc)
+            tg_app = None
 
     # --- startup reconcile ----------------------------------------------------
     try:
@@ -325,6 +382,15 @@ async def run_live(
         for task in tasks:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
+        # --- Telegram cleanup (mirror reference main_live.py pattern) ---------
+        if tg_app is not None:
+            with contextlib.suppress(Exception):
+                if tg_app.updater is not None:
+                    await tg_app.updater.stop()
+            with contextlib.suppress(Exception):
+                await tg_app.stop()
+            with contextlib.suppress(Exception):
+                await tg_app.shutdown()
         notifier.send("live runner stopped")
         # producer_thread is daemon=True; it dies with the process / loop exit.
 
@@ -402,6 +468,10 @@ def main() -> None:
     _news_csv_default = "config/news_events.csv"
     news_csv: str | None = _news_csv_default if Path(_news_csv_default).exists() else None
 
+    # Enable Telegram when a bot token is available; off by default so CI/tests
+    # are unaffected (Application polling requires a real token + network).
+    enable_telegram = bool(os.environ.get("TELEGRAM_BOT_TOKEN", ""))
+
     asyncio.run(
         run_live(
             cfg,
@@ -413,6 +483,7 @@ def main() -> None:
             max_runtime_seconds=args.max_runtime_seconds,
             db_path="data/bot.db",
             news_csv=news_csv,
+            enable_telegram=enable_telegram,
             # starting_balance left as None so it is auto-fetched from account_summary()
         )
     )
