@@ -46,6 +46,16 @@ target-version = "py313"
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 ignore = ["E501"]
 
+[tool.ruff.lint.per-file-ignores]
+# Vendored scaffold — E702 (semicolons used for compact candle construction),
+# E741 (single-letter 'l' is the OHLC "low" field, a domain convention),
+# F841 (bot.py has a 'pip' variable computed but not yet wired in the scaffold).
+"src/forex_scalper/backtest.py" = ["E702", "E741"]
+"src/forex_scalper/bot.py" = ["E702", "E741", "F841"]
+"src/forex_scalper/demo_smoke.py" = ["E702", "E741"]
+# Test helper uses o/h/l/c parameter names matching the OHLC domain convention.
+"tests/test_indicators.py" = ["E741"]
+
 [tool.mypy]
 python_version = "3.13"
 strict = true
@@ -54,3 +64,19 @@ warn_return_any = true
 disallow_untyped_defs = true
 explicit_package_bases = true
 mypy_path = "src"
+
+[[tool.mypy.overrides]]
+# Vendored trading scaffold — preserved verbatim and pinned by characterization
+# tests. We don't retrofit strict annotations onto the proven strategy logic.
+module = [
+    "forex_scalper.models", "forex_scalper.indicators", "forex_scalper.data",
+    "forex_scalper.bias", "forex_scalper.regime", "forex_scalper.setups",
+    "forex_scalper.session", "forex_scalper.trade_manager", "forex_scalper.journal",
+    "forex_scalper.notifier", "forex_scalper.config", "forex_scalper.bot",
+    "forex_scalper.backtest", "forex_scalper.demo_smoke",
+]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = false
+disallow_untyped_calls = false
+disallow_any_generics = false

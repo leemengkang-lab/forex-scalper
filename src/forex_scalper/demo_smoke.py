@@ -9,7 +9,7 @@ Run from inside the package folder:  python demo_smoke.py
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from forex_scalper import bias as bias_mod
 from forex_scalper import regime as regime_mod
@@ -33,7 +33,7 @@ def candle(t, o, h, l, c):
 
 def build_market():
     m = MarketState()
-    t0 = datetime(2025, 1, 6, 8, 0, tzinfo=timezone.utc)
+    t0 = datetime(2025, 1, 6, 8, 0, tzinfo=UTC)
 
     # --- 1H uptrend (drives bias LONG_ONLY) ---
     p = 1.0700
@@ -97,7 +97,7 @@ def main():
 
     bot = ScalpBot(cfg, market, broker)
     # force a time inside the London/NY overlap so the session gate passes
-    now = datetime(2025, 1, 6, 13, 30, tzinfo=timezone.utc)
+    now = datetime(2025, 1, 6, 13, 30, tzinfo=UTC)
     bot.on_candle_close(INSTR, now)
 
     print(f"\nopen trades: {[(t.trade_id, t.units, round(t.entry_price,5)) for t in broker.open_trades()]}")

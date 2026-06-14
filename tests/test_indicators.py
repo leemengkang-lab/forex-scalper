@@ -3,14 +3,14 @@ Characterization tests for forex_scalper.indicators.
 These pin the CURRENT behavior — do not change source to make them pass.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from forex_scalper.indicators import atr, avg_body_ratio, ema, recent_swing_low
 from forex_scalper.models import Candle
 
 
 def _c(o, h, l, c):
-    return Candle(datetime(2025, 1, 1, tzinfo=timezone.utc), o, h, l, c)
+    return Candle(datetime(2025, 1, 1, tzinfo=UTC), o, h, l, c)
 
 
 def test_ema_returns_none_when_too_short():

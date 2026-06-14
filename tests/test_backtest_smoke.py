@@ -4,7 +4,7 @@ This caught a real regression: adding `modify_stop` to the Broker ABC left
 BacktestBroker abstract (uninstantiable). Nothing else exercises the backtest
 script, so this lightweight smoke test pins it.
 """
-from forex_scalper.backtest import Backtester, BacktestBroker, synth
+from forex_scalper.backtest import BacktestBroker, Backtester, synth
 from forex_scalper.config import BotConfig
 
 

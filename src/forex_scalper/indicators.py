@@ -7,12 +7,10 @@ Kept separate so they can be unit-tested in isolation.
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 from forex_scalper.models import Candle
 
 
-def ema(values: List[float], period: int) -> Optional[float]:
+def ema(values: list[float], period: int) -> float | None:
     """Latest EMA value, or None if not enough data."""
     if len(values) < period:
         return None
@@ -23,9 +21,9 @@ def ema(values: List[float], period: int) -> Optional[float]:
     return e
 
 
-def ema_series(values: List[float], period: int) -> List[Optional[float]]:
+def ema_series(values: list[float], period: int) -> list[float | None]:
     """Full EMA series aligned to `values` (None until seeded)."""
-    out: List[Optional[float]] = [None] * len(values)
+    out: list[float | None] = [None] * len(values)
     if len(values) < period:
         return out
     k = 2 / (period + 1)
@@ -41,7 +39,7 @@ def true_range(prev_close: float, c: Candle) -> float:
     return max(c.high - c.low, abs(c.high - prev_close), abs(c.low - prev_close))
 
 
-def atr(candles: List[Candle], period: int = 14) -> Optional[float]:
+def atr(candles: list[Candle], period: int = 14) -> float | None:
     """Wilder's ATR. Returns latest value or None if insufficient data."""
     if len(candles) < period + 1:
         return None
@@ -52,24 +50,24 @@ def atr(candles: List[Candle], period: int = 14) -> Optional[float]:
     return a
 
 
-def atr_pips(instrument_pip: float, candles: List[Candle], period: int = 14) -> Optional[float]:
+def atr_pips(instrument_pip: float, candles: list[Candle], period: int = 14) -> float | None:
     a = atr(candles, period)
     return None if a is None else a / instrument_pip
 
 
-def recent_swing_low(candles: List[Candle], lookback: int = 5) -> Optional[float]:
+def recent_swing_low(candles: list[Candle], lookback: int = 5) -> float | None:
     if len(candles) < lookback:
         return None
     return min(c.low for c in candles[-lookback:])
 
 
-def recent_swing_high(candles: List[Candle], lookback: int = 5) -> Optional[float]:
+def recent_swing_high(candles: list[Candle], lookback: int = 5) -> float | None:
     if len(candles) < lookback:
         return None
     return max(c.high for c in candles[-lookback:])
 
 
-def avg_body_ratio(candles: List[Candle], lookback: int = 10) -> Optional[float]:
+def avg_body_ratio(candles: list[Candle], lookback: int = 10) -> float | None:
     """Mean (body / range) over recent candles. High => directional; low => choppy/wicky."""
     sample = candles[-lookback:]
     rngs = [c for c in sample if c.range > 0]

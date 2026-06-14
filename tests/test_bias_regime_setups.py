@@ -11,7 +11,7 @@ from forex_scalper import regime as regime_mod
 from forex_scalper import setups as setups_mod
 from forex_scalper.config import BotConfig
 from forex_scalper.demo_smoke import INSTR, build_market
-from forex_scalper.models import Bias, LONG, Regime
+from forex_scalper.models import LONG, Bias, Regime
 
 
 def test_pipeline_produces_long_only_trend_setup_a():

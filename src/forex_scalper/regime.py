@@ -17,7 +17,6 @@ DEAD  -> stand flat. Flat is a position.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
 
 from forex_scalper import indicators as ind
 from forex_scalper.data import MarketState
@@ -56,7 +55,7 @@ def get_regime(market: MarketState, instrument: str, cfg: RegimeConfig) -> Regim
     return Regime.RANGE
 
 
-def _avg_atr(candles: List, atr_period: int, window: int):
+def _avg_atr(candles: list, atr_period: int, window: int):
     """Mean ATR over the last `window` rolling computations."""
     vals = []
     # compute ATR at several recent end-points to get a baseline

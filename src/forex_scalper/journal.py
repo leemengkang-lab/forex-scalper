@@ -11,9 +11,8 @@ from __future__ import annotations
 
 import csv
 import os
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
-from typing import Optional
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 
 FIELDS = [
     "ts", "event", "instrument", "setup", "direction", "bias", "regime",
@@ -54,7 +53,7 @@ class Journal:
 
     def log(self, row: JournalRow) -> None:
         if not row.ts:
-            row.ts = datetime.now(timezone.utc).isoformat()
+            row.ts = datetime.now(UTC).isoformat()
         d = asdict(row)
         with open(self.path, "a", newline="") as f:
             csv.DictWriter(f, fieldnames=FIELDS).writerow(d)

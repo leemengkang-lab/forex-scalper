@@ -30,10 +30,9 @@ Wire-up checklist
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Optional
 
 logger = logging.getLogger("risk_manager")
 
@@ -123,8 +122,8 @@ class RiskManager:
         self,
         config: RiskConfig,
         balance: float,
-        usd_sign: Optional[dict] = None,
-        now: Optional[datetime] = None,
+        usd_sign: dict[str, int] | None = None,
+        now: datetime | None = None,
     ):
         self.cfg = config
         self.balance = float(balance)
@@ -133,7 +132,7 @@ class RiskManager:
         self.halted = False
         self._consecutive_losses = 0
 
-        now = now or datetime.now(timezone.utc)
+        now = now or datetime.now(UTC)
         self._current_day = self._trading_day(now)
         self._day_start_balance = self.balance
         self._day_realized_pnl = 0.0
@@ -163,7 +162,7 @@ class RiskManager:
 
     # ----- day rollover --------------------------------------------------- #
     def _trading_day(self, now: datetime) -> datetime:
-        shifted = now.astimezone(timezone.utc) - timedelta(hours=self.cfg.day_rollover_hour_utc)
+        shifted = now.astimezone(UTC) - timedelta(hours=self.cfg.day_rollover_hour_utc)
         return shifted.replace(hour=0, minute=0, second=0, microsecond=0)
 
     def _maybe_rollover(self, now: datetime) -> None:
@@ -179,8 +178,8 @@ class RiskManager:
     def register_fill(self, instrument: str, direction: int, risk_amount: float) -> None:
         self.open_positions.append(OpenPosition(instrument, direction, risk_amount))
 
-    def close_position(self, instrument: str, pnl: float, now: Optional[datetime] = None) -> None:
-        now = now or datetime.now(timezone.utc)
+    def close_position(self, instrument: str, pnl: float, now: datetime | None = None) -> None:
+        now = now or datetime.now(UTC)
         self._maybe_rollover(now)
 
         # remove one matching open position
@@ -207,8 +206,8 @@ class RiskManager:
             self.halted = True
 
     # ----- the core decision ---------------------------------------------- #
-    def evaluate(self, signal: TradeSignal, now: Optional[datetime] = None) -> RiskDecision:
-        now = now or datetime.now(timezone.utc)
+    def evaluate(self, signal: TradeSignal, now: datetime | None = None) -> RiskDecision:
+        now = now or datetime.now(UTC)
         self._maybe_rollover(now)
 
         def deny(reason: Reject, note: str = "") -> RiskDecision:
@@ -295,7 +294,7 @@ if __name__ == "__main__":
 
     rm = RiskManager(RiskConfig(), balance=10_000)
 
-    def show(tag, sig):
+    def show(tag: str, sig: TradeSignal) -> None:
         d = rm.evaluate(sig)
         status = "APPROVED" if d.approved else f"REJECTED ({d.reason.value})"
         extra = f"  units={d.units:+d} stop={d.stop_price} ({d.stop_pips}p) risk={d.risk_amount}" if d.approved else ""

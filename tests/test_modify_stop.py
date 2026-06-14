@@ -1,8 +1,7 @@
 """Tests for broker.modify_stop capability (Task 2.3)."""
 
-from datetime import datetime, timezone
 
-from forex_scalper.execution import OandaBroker, PaperBroker, OpenTrade
+from forex_scalper.execution import OandaBroker, PaperBroker
 
 
 class FakeClient:

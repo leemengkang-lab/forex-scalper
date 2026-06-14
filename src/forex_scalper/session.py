@@ -12,9 +12,8 @@ Two gates that block NEW entries (open trades are still managed):
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, time, timedelta, timezone
-from typing import Dict, List
+from dataclasses import dataclass
+from datetime import UTC, datetime, time, timedelta
 
 
 @dataclass
@@ -30,22 +29,22 @@ class SessionFilter:
     def __init__(self, cfg: SessionConfig):
         self.cfg = cfg
         # instrument -> list of event datetimes (UTC). "*" applies to all.
-        self._events: Dict[str, List[datetime]] = {}
+        self._events: dict[str, list[datetime]] = {}
 
-    def set_events(self, events: Dict[str, List[datetime]]) -> None:
+    def set_events(self, events: dict[str, list[datetime]]) -> None:
         self._events = events
 
     def in_session(self, now: datetime) -> bool:
-        t = now.astimezone(timezone.utc).time()
+        t = now.astimezone(UTC).time()
         return self.cfg.start_utc <= t < self.cfg.end_utc
 
     def news_blackout(self, instrument: str, now: datetime) -> bool:
-        now = now.astimezone(timezone.utc)
+        now = now.astimezone(UTC)
         before = timedelta(minutes=self.cfg.news_buffer_before_min)
         after = timedelta(minutes=self.cfg.news_buffer_after_min)
         relevant = self._events.get(instrument, []) + self._events.get("*", [])
         for ev in relevant:
-            ev = ev.astimezone(timezone.utc)
+            ev = ev.astimezone(UTC)
             if ev - before <= now <= ev + after:
                 return True
         return False

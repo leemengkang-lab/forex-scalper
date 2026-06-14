@@ -14,8 +14,7 @@ OANDA for live). Nothing trades real money until config.live is explicitly True.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from forex_scalper import bias as bias_mod
 from forex_scalper import regime as regime_mod
@@ -27,7 +26,7 @@ from forex_scalper.journal import Journal, JournalRow
 from forex_scalper.models import SetupSignal, pip_size
 from forex_scalper.notifier import ConsoleNotifier, Notifier
 from forex_scalper.persistence import Repository
-from forex_scalper.risk_manager import RiskConfig, RiskManager, TradeSignal
+from forex_scalper.risk_manager import RiskManager, TradeSignal
 from forex_scalper.session import SessionFilter
 from forex_scalper.trade_manager import TradeManager
 
@@ -36,7 +35,7 @@ logger = logging.getLogger("bot")
 
 class ScalpBot:
     def __init__(self, cfg: BotConfig, market: MarketState, broker: Broker,
-                 notifier: Optional[Notifier] = None, repo: Repository | None = None):
+                 notifier: Notifier | None = None, repo: Repository | None = None):
         self.cfg = cfg
         self.market = market
         self.broker = broker
@@ -48,8 +47,8 @@ class ScalpBot:
         self.risk = RiskManager(cfg.risk, cfg.starting_balance, cfg.usd_sign)
 
     # ---- called by the run loop whenever a 1M candle closes ------------- #
-    def on_candle_close(self, instrument: str, now: Optional[datetime] = None) -> None:
-        now = now or datetime.now(timezone.utc)
+    def on_candle_close(self, instrument: str, now: datetime | None = None) -> None:
+        now = now or datetime.now(UTC)
         try:
             self.trades.manage(now)                      # 1) always manage open trades
 

@@ -179,7 +179,7 @@ def _build_telegram_live_app(tg_token: str, repo: Any, risk: Any, broker: Any) -
     NOTE: Application polling is covered by manual smoke testing with a real
     token, not by unit tests.
     """
-    from forex_scalper.telegram_control import (  # noqa: PLC0415
+    from forex_scalper.telegram_control import (
         TelegramCommands,
         allowed_chat_ids_from_env,
         build_telegram_app,
@@ -245,7 +245,7 @@ async def run_live(
     # for TelegramNotifier so alerts reach the operator's phone.
     tg_token = os.environ.get("TELEGRAM_BOT_TOKEN", "") if enable_telegram else ""
     if enable_telegram and tg_token and notifier is None:
-        from forex_scalper.telegram_control import notifier_from_env  # noqa: PLC0415
+        from forex_scalper.telegram_control import notifier_from_env
         notifier = notifier_from_env()
 
     notifier = notifier or ConsoleNotifier()
@@ -313,7 +313,7 @@ async def run_live(
             if tg_app.updater is not None:
                 await tg_app.updater.start_polling()
             log.info("Telegram polling started")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("Telegram polling failed to start: %r", exc)
             tg_app = None
 

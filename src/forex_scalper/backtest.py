@@ -25,12 +25,8 @@ import logging
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Tuple
+from datetime import UTC, datetime, timedelta
 
-from forex_scalper import bias as bias_mod
-from forex_scalper import regime as regime_mod
-from forex_scalper import setups as setups_mod
 from forex_scalper.bot import ScalpBot
 from forex_scalper.config import BotConfig
 from forex_scalper.data import MarketState
@@ -44,12 +40,12 @@ logging.basicConfig(level=logging.WARNING)  # quiet during replay
 # Backtest broker: deterministic fills + intrabar SL/TP resolution
 # --------------------------------------------------------------------------- #
 class BacktestBroker(Broker):
-    def __init__(self, pip_value: Dict[str, float], spread_pips: float = 0.6):
+    def __init__(self, pip_value: dict[str, float], spread_pips: float = 0.6):
         self._pip_value = pip_value
         self._spread = spread_pips
-        self._trades: Dict[str, OpenTrade] = {}
+        self._trades: dict[str, OpenTrade] = {}
         self._n = 0
-        self.now: datetime = datetime.now(timezone.utc)
+        self.now: datetime = datetime.now(UTC)
         self.on_close = lambda trade, pnl, reason: None  # set by Backtester
 
     def set_price_from_close(self, instrument: str, close: float) -> None:
@@ -59,10 +55,10 @@ class BacktestBroker(Broker):
         self._bid[instrument] = close - half
         self._ask[instrument] = close + half
 
-    def get_price(self, instrument: str) -> Tuple[float, float]:
+    def get_price(self, instrument: str) -> tuple[float, float]:
         return self._bid[instrument], self._ask[instrument]
 
-    def place_market_order(self, instrument, units, stop, take_profit, setup="") -> Optional[OpenTrade]:
+    def place_market_order(self, instrument, units, stop, take_profit, setup="") -> OpenTrade | None:
         bid, ask = self.get_price(instrument)
         fill = ask if units > 0 else bid
         self._n += 1
@@ -70,7 +66,7 @@ class BacktestBroker(Broker):
         self._trades[t.trade_id] = t
         return t
 
-    def close_trade(self, trade_id: str, reason: str = "time_stop") -> Optional[float]:
+    def close_trade(self, trade_id: str, reason: str = "time_stop") -> float | None:
         t = self._trades.pop(trade_id, None)
         if not t:
             return None
@@ -80,10 +76,10 @@ class BacktestBroker(Broker):
         self.on_close(t, pnl, reason)
         return pnl
 
-    def open_trades(self) -> List[OpenTrade]:
+    def open_trades(self) -> list[OpenTrade]:
         return list(self._trades.values())
 
-    def modify_stop(self, trade_id: str, new_stop: float, *, instrument: Optional[str] = None) -> bool:
+    def modify_stop(self, trade_id: str, new_stop: float, *, instrument: str | None = None) -> bool:
         t = self._trades.get(trade_id)
         if t is None:
             return False
@@ -119,9 +115,9 @@ class BacktestBroker(Broker):
 # --------------------------------------------------------------------------- #
 # Aggregation 1M -> higher timeframes
 # --------------------------------------------------------------------------- #
-def aggregate(candles_1m: List[Candle], minutes: int) -> List[Tuple[datetime, Candle]]:
+def aggregate(candles_1m: list[Candle], minutes: int) -> list[tuple[datetime, Candle]]:
     """Returns (bucket_end_time, aggregated_candle). bucket_end is when it completes."""
-    buckets: Dict[datetime, List[Candle]] = defaultdict(list)
+    buckets: dict[datetime, list[Candle]] = defaultdict(list)
     for c in candles_1m:
         start = c.time.replace(second=0, microsecond=0)
         floored = start - timedelta(minutes=start.minute % minutes,
@@ -149,7 +145,7 @@ class TradeRecord:
     reason: str
 
 
-def report(name: str, trades: List[TradeRecord], start_bal: float) -> None:
+def report(name: str, trades: list[TradeRecord], start_bal: float) -> None:
     if not trades:
         print(f"\n[{name}]  no trades")
         return
@@ -164,7 +160,7 @@ def report(name: str, trades: List[TradeRecord], start_bal: float) -> None:
     eq = start_bal; peak = eq; mdd = 0.0
     for t in trades:
         eq += t.pnl; peak = max(peak, eq); mdd = min(mdd, eq / peak - 1)
-    by_setup = defaultdict(int)
+    by_setup: defaultdict[str, int] = defaultdict(int)
     for t in trades:
         by_setup[t.setup] += 1
 
@@ -190,7 +186,7 @@ class Backtester:
         self.market.set_pip_value(instrument, pip_value)
         self.bot = ScalpBot(cfg, self.market, self.broker)
         self.broker.on_close = self._on_close
-        self.records: List[TradeRecord] = []
+        self.records: list[TradeRecord] = []
 
     def _on_close(self, t: OpenTrade, pnl: float, reason: str):
         pip = pip_size(t.instrument)
@@ -200,7 +196,7 @@ class Backtester:
         # route to risk manager: frees heat, updates daily P&L + kill switch
         self.bot.risk.close_position(t.instrument, pnl, now=self.broker.now)
 
-    def run(self, candles_1m: List[Candle]):
+    def run(self, candles_1m: list[Candle]):
         agg15 = aggregate(candles_1m, 15)
         agg60 = aggregate(candles_1m, 60)
         i15 = i60 = 0
@@ -222,7 +218,7 @@ class Backtester:
             self.bot.on_candle_close(self.instrument, t)
 
 
-def split_by_date(candles: List[Candle], cutoff: datetime):
+def split_by_date(candles: list[Candle], cutoff: datetime):
     return ([c for c in candles if c.time < cutoff],
             [c for c in candles if c.time >= cutoff])
 
@@ -230,10 +226,10 @@ def split_by_date(candles: List[Candle], cutoff: datetime):
 # --------------------------------------------------------------------------- #
 # Synthetic data (so it runs with no file): trending session-days w/ pullbacks
 # --------------------------------------------------------------------------- #
-def synth(days: int = 30, instrument: str = "EUR_USD") -> List[Candle]:
-    out: List[Candle] = []
+def synth(days: int = 30, instrument: str = "EUR_USD") -> list[Candle]:
+    out: list[Candle] = []
     price = 1.0800
-    day0 = datetime(2025, 1, 6, tzinfo=timezone.utc)
+    day0 = datetime(2025, 1, 6, tzinfo=UTC)
     for d in range(days):
         base = day0 + timedelta(days=d)
         drift = 0.00010 if (d % 4 != 3) else -0.00008   # mostly up, occasional down day
@@ -252,12 +248,12 @@ def synth(days: int = 30, instrument: str = "EUR_USD") -> List[Candle]:
     return out
 
 
-def load_csv(path: str) -> List[Candle]:
+def load_csv(path: str) -> list[Candle]:
     out = []
     with open(path) as f:
         for row in csv.DictReader(f):
             out.append(Candle(
-                datetime.fromisoformat(row["time"]).replace(tzinfo=timezone.utc),
+                datetime.fromisoformat(row["time"]).replace(tzinfo=UTC),
                 float(row["open"]), float(row["high"]), float(row["low"]), float(row["close"])))
     return out
 
@@ -269,7 +265,7 @@ def main():
 
     if len(sys.argv) >= 2:
         candles = load_csv(sys.argv[1])
-        cutoff = datetime.fromisoformat(sys.argv[2]).replace(tzinfo=timezone.utc) \
+        cutoff = datetime.fromisoformat(sys.argv[2]).replace(tzinfo=UTC) \
             if len(sys.argv) >= 3 else candles[len(candles) * 2 // 3].time
     else:
         candles = synth(30, instrument)

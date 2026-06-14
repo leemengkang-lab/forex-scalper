@@ -11,7 +11,6 @@ unless they survive out-of-sample testing.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List
 
 from forex_scalper.bias import BiasConfig
 from forex_scalper.regime import RegimeConfig
@@ -23,10 +22,10 @@ from forex_scalper.trade_manager import TradeManagerConfig
 
 @dataclass
 class BotConfig:
-    instruments: List[str] = field(default_factory=lambda: [
+    instruments: list[str] = field(default_factory=lambda: [
         "EUR_USD", "AUD_USD", "USD_JPY", "NZD_USD", "USD_CHF",
     ])
-    usd_sign: Dict[str, int] = field(default_factory=lambda: dict(DEFAULT_USD_SIGN))
+    usd_sign: dict[str, int] = field(default_factory=lambda: dict(DEFAULT_USD_SIGN))
 
     risk: RiskConfig = field(default_factory=RiskConfig)
     bias: BiasConfig = field(default_factory=BiasConfig)

@@ -16,11 +16,10 @@ adds pip_value and hands it to the risk manager, which has the final say.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
 
 from forex_scalper import indicators as ind
 from forex_scalper.data import MarketState
-from forex_scalper.models import LONG, SHORT, Bias, Candle, Regime, SetupSignal, pip_size
+from forex_scalper.models import LONG, SHORT, Bias, Regime, SetupSignal
 
 
 @dataclass
@@ -36,7 +35,7 @@ class SetupConfig:
 
 
 def detect(market: MarketState, instrument: str, bias: Bias, regime: Regime,
-           cfg: SetupConfig) -> Optional[SetupSignal]:
+           cfg: SetupConfig) -> SetupSignal | None:
     if regime == Regime.TREND and bias in (Bias.LONG_ONLY, Bias.SHORT_ONLY):
         sig = _pullback(market, instrument, bias, cfg)
         if sig:
@@ -49,7 +48,7 @@ def detect(market: MarketState, instrument: str, bias: Bias, regime: Regime,
 
 
 # --------------------------------------------------------------------------- #
-def _pullback(market, instrument, bias, cfg) -> Optional[SetupSignal]:
+def _pullback(market, instrument, bias, cfg) -> SetupSignal | None:
     candles = market.candles(instrument, cfg.timeframe)
     if len(candles) < cfg.ema_period + 5:
         return None
@@ -86,7 +85,7 @@ def _pullback(market, instrument, bias, cfg) -> Optional[SetupSignal]:
 
 
 # --------------------------------------------------------------------------- #
-def _level_rejection(market, instrument, bias, cfg) -> Optional[SetupSignal]:
+def _level_rejection(market, instrument, bias, cfg) -> SetupSignal | None:
     candles = market.candles(instrument, cfg.timeframe)
     if len(candles) < 5:
         return None
@@ -121,7 +120,7 @@ def _level_rejection(market, instrument, bias, cfg) -> Optional[SetupSignal]:
     return None
 
 
-def _nearest_level(instrument: str, high: float, low: float, cfg: SetupConfig) -> Optional[float]:
+def _nearest_level(instrument: str, high: float, low: float, cfg: SetupConfig) -> float | None:
     """Nearest round-number level to the current candle (cheap proxy for S/R)."""
     step = cfg.round_step_jpy if instrument.upper().endswith("JPY") else cfg.round_step
     mid = (high + low) / 2
