@@ -36,7 +36,7 @@ markers = [
     "demo: tests that hit the real OANDA demo account (require credentials)",
 ]
 asyncio_mode = "auto"
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 
 [tool.ruff]
 line-length = 100
@@ -63,7 +63,7 @@ warn_unused_ignores = true
 warn_return_any = true
 disallow_untyped_defs = true
 explicit_package_bases = true
-mypy_path = "src"
+mypy_path = ["src", "."]
 
 [[tool.mypy.overrides]]
 # Vendored trading scaffold — preserved verbatim and pinned by characterization
@@ -80,3 +80,12 @@ disallow_incomplete_defs = false
 check_untyped_defs = false
 disallow_untyped_calls = false
 disallow_any_generics = false
+
+[[tool.mypy.overrides]]
+# fetch_history CLI sections use dynamic oandapyV20 dicts (Any) and lazy imports
+# for the v20 client (untyped third-party lib). Relax only what the dynamic
+# nature of the OANDA SDK requires; the testable core remains strictly typed.
+module = ["scripts.fetch_history"]
+disallow_any_generics = false
+warn_return_any = false
+warn_unused_ignores = false
