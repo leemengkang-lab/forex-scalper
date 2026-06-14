@@ -24,7 +24,7 @@ from typing import Any
 import requests
 from oandapyV20.exceptions import V20Error  # type: ignore[import-untyped]
 
-from forex_scalper.models import pip_size
+from forex_scalper.models import Candle, pip_size
 
 logger = logging.getLogger("execution")
 
@@ -50,6 +50,17 @@ def _fmt_price(instrument: str, price: float) -> str:
     if pip_size(instrument) == 0.01:
         return f"{price:.3f}"
     return f"{price:.5f}"
+
+
+_TF_TO_GRAN: dict[str, str] = {"1M": "M1", "15M": "M15", "1H": "H1"}
+
+
+@dataclass
+class AccountSummary:
+    balance: float
+    nav: float
+    currency: str
+    open_trade_count: int
 
 
 @dataclass
@@ -357,6 +368,55 @@ class OandaBroker(Broker):
                 )
             )
         return out
+
+    def fetch_candles(
+        self, instrument: str, timeframe: str, count: int = 200
+    ) -> list[Candle]:
+        """Return completed candles oldest→newest — retryable read."""
+        gran = _TF_TO_GRAN.get(timeframe)
+        if gran is None:
+            raise ValueError(
+                f"fetch_candles: unknown timeframe {timeframe!r}; "
+                f"supported: {list(_TF_TO_GRAN)}"
+            )
+        import oandapyV20.endpoints.instruments as v20_instruments  # type: ignore[import-untyped]
+
+        req = v20_instruments.InstrumentsCandles(
+            instrument=instrument,
+            params={"granularity": gran, "count": count, "price": "M"},
+        )
+        resp = self._request_with_retry(req)
+        out: list[Candle] = []
+        for c in resp.get("candles", []):
+            if not c.get("complete", False):
+                continue
+            mid = c["mid"]
+            ts = datetime.fromisoformat(c["time"].replace("Z", "+00:00")).astimezone(UTC)
+            out.append(
+                Candle(
+                    time=ts,
+                    open=float(mid["o"]),
+                    high=float(mid["h"]),
+                    low=float(mid["l"]),
+                    close=float(mid["c"]),
+                    complete=True,
+                )
+            )
+        return out
+
+    def account_summary(self) -> AccountSummary:
+        """Return live account summary — retryable read."""
+        import oandapyV20.endpoints.accounts as v20_accounts  # type: ignore[import-untyped]
+
+        req = v20_accounts.AccountSummary(accountID=self._account_id)
+        resp = self._request_with_retry(req)
+        a = resp["account"]
+        return AccountSummary(
+            balance=float(a["balance"]),
+            nav=float(a["NAV"]),
+            currency=a["currency"],
+            open_trade_count=int(a.get("openTradeCount", 0)),
+        )
 
     def modify_stop(
         self, trade_id: str, new_stop: float, *, instrument: str | None = None
