@@ -83,6 +83,13 @@ class BacktestBroker(Broker):
     def open_trades(self) -> List[OpenTrade]:
         return list(self._trades.values())
 
+    def modify_stop(self, trade_id: str, new_stop: float, *, instrument: Optional[str] = None) -> bool:
+        t = self._trades.get(trade_id)
+        if t is None:
+            return False
+        t.stop_price = new_stop
+        return True
+
     # called by the engine for every new candle, before new-entry detection
     def resolve_candle(self, instrument: str, c: Candle) -> None:
         for tid, t in list(self._trades.items()):
