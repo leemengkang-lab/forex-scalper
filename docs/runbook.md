@@ -55,16 +55,18 @@ sudo useradd --no-create-home --shell /bin/false botuser
 sudo python3 -m venv /opt/forex-scalper/.venv
 sudo /opt/forex-scalper/.venv/bin/pip install /opt/forex-scalper
 
-# 4. Create the secrets file from the example template
-sudo cp /opt/forex-scalper/.env.example /etc/forex-scalper.env
+# 4. Create the secrets file. SIMPLEST: copy your existing demo .env verbatim
+#    (it already has the correct variable names) instead of hand-editing:
+#       scp your-dev-box:/c/Users/User/forex-scalper/.env user@vm:/tmp/fx.env
+#       sudo mv /tmp/fx.env /etc/forex-scalper.env
+sudo cp /opt/forex-scalper/.env.example /etc/forex-scalper.env   # or start from the template
 sudo chmod 600 /etc/forex-scalper.env
-# Edit the file and fill in real values:
 sudo nano /etc/forex-scalper.env
 #   OANDA_TOKEN=<your-practice-token>
 #   OANDA_ACCOUNT_ID=101-003-35599767-001
 #   OANDA_ENVIRONMENT=practice
-#   TELEGRAM_BOT_TOKEN=<optional>
-#   TELEGRAM_CHAT_ID=<optional>
+#   TELEGRAM_BOT_TOKEN=<reuse your bot token>
+#   TELEGRAM_ALLOWED_CHAT_IDS=<your chat id(s), comma-separated>   # NOT "TELEGRAM_CHAT_ID"
 
 # 5. Set ownership so the service user can write the SQLite DB
 sudo mkdir -p /opt/forex-scalper/data
