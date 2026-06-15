@@ -17,3 +17,87 @@
 
 ## Open action items
 - [ ] SSH to the GCP e2-micro VM and record whether `forex-bot.service` is currently trading (`systemctl status forex-bot`), and whether the live deployment uses a separate (live) account vs this practice one. Note the answer here.
+
+---
+
+## Deployment (demo account)
+
+> **WARNING — ONE BOT PER ACCOUNT**
+>
+> forex-scalper and the old forex-bot **both target the same OANDA practice account
+> (101-003-35599767-001)**. Running both simultaneously means two bots fighting over
+> one account: the scalper's reconciler/watchdog will adopt and act on the old bot's
+> open trades, leading to unpredictable behaviour.
+>
+> **Stop the incumbent BEFORE starting forex-scalper:**
+> ```bash
+> sudo systemctl disable --now forex-bot   # or stop its Docker container
+> ```
+
+> **Note on validation:** The strategy has **not** passed the real-data validation
+> gate (Phase 8). This demo deployment is for infrastructure verification and
+> observation only — the edge is not yet proven.
+
+---
+
+### Option A — Systemd venv deploy (recommended for GCP e2-micro)
+
+```bash
+# 1. Copy / clone the repo to the VM
+sudo git clone https://github.com/<your-org>/forex-scalper.git /opt/forex-scalper
+# — or rsync from local:
+# rsync -av --exclude='.venv' --exclude='data/' . user@<vm-ip>:/opt/forex-scalper/
+
+# 2. Create a dedicated service user (skip if already exists)
+sudo useradd --no-create-home --shell /bin/false botuser
+
+# 3. Create the Python venv and install the package
+sudo python3 -m venv /opt/forex-scalper/.venv
+sudo /opt/forex-scalper/.venv/bin/pip install /opt/forex-scalper
+
+# 4. Create the secrets file from the example template
+sudo cp /opt/forex-scalper/.env.example /etc/forex-scalper.env
+sudo chmod 600 /etc/forex-scalper.env
+# Edit the file and fill in real values:
+sudo nano /etc/forex-scalper.env
+#   OANDA_TOKEN=<your-practice-token>
+#   OANDA_ACCOUNT_ID=101-003-35599767-001
+#   OANDA_ENVIRONMENT=practice
+#   TELEGRAM_BOT_TOKEN=<optional>
+#   TELEGRAM_CHAT_ID=<optional>
+
+# 5. Set ownership so the service user can write the SQLite DB
+sudo mkdir -p /opt/forex-scalper/data
+sudo chown -R botuser:botuser /opt/forex-scalper/data
+
+# 6. Install and enable the systemd unit
+sudo cp /opt/forex-scalper/systemd/forex-scalper.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now forex-scalper
+
+# 7. Tail the logs
+journalctl -u forex-scalper -f
+```
+
+---
+
+### Option B — Docker
+
+```bash
+# Build the image (run from the repo root)
+docker build -t forex-scalper:latest .
+
+# Ensure the secrets file exists on the host (same format as Option A step 4)
+sudo nano /etc/forex-scalper.env   # fill in creds, chmod 600
+
+# Run the container
+docker run -d \
+  --name forex-scalper \
+  --env-file /etc/forex-scalper.env \
+  --restart unless-stopped \
+  -v /opt/forex-scalper-data:/app/data \
+  forex-scalper:latest
+
+# Tail the logs
+docker logs -f forex-scalper
+```

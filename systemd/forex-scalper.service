@@ -1,0 +1,42 @@
+# forex-scalper.service
+#
+# Prerequisites on the VM:
+#   - Repo cloned/copied to /opt/forex-scalper
+#   - Python venv created at /opt/forex-scalper/.venv with the package installed:
+#       python3 -m venv /opt/forex-scalper/.venv
+#       /opt/forex-scalper/.venv/bin/pip install /opt/forex-scalper
+#   - Secrets file /etc/forex-scalper.env created from .env.example (chmod 600,
+#     owned by root or the service user).  It must export at minimum:
+#       OANDA_TOKEN=...
+#       OANDA_ACCOUNT_ID=...
+#       OANDA_ENVIRONMENT=practice
+#       TELEGRAM_BOT_TOKEN=...   (optional — bot runs without Telegram)
+#       TELEGRAM_CHAT_ID=...
+#
+# Set the User= below to a dedicated low-privilege account (e.g. "botuser"):
+#   sudo useradd --no-create-home --shell /bin/false botuser
+#   sudo chown -R botuser:botuser /opt/forex-scalper/data
+
+[Unit]
+Description=Forex Scalper Trading Bot (OANDA practice)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# TODO: set this to a dedicated non-root user, e.g. User=botuser
+User=botuser
+WorkingDirectory=/opt/forex-scalper
+EnvironmentFile=/etc/forex-scalper.env
+ExecStart=/opt/forex-scalper/.venv/bin/python -m forex_scalper.live
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
