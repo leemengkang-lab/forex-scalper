@@ -1,42 +1,77 @@
 #!/usr/bin/env bash
 #
-# deploy_vm.sh — one-shot demo deployment on the GCP VM.
+# deploy_vm.sh — replace the old forex-bot with forex-scalper on its VM (DEMO).
 #
-# PREREQUISITES (do these once before running):
-#   1. The repo is present at /opt/forex-scalper  (git clone or rsync).
-#   2. /etc/forex-scalper.env exists (chmod 600) with your PRACTICE creds:
-#        OANDA_TOKEN=...           OANDA_ACCOUNT_ID=101-003-35599767-001
-#        OANDA_ENVIRONMENT=practice
-#        TELEGRAM_BOT_TOKEN=...    TELEGRAM_ALLOWED_CHAT_IDS=<your chat id>
-#      (Simplest: scp your existing forex-scalper/.env up to /etc/forex-scalper.env.)
+# Run it like this (the repo must already be cloned to /opt/forex-scalper):
+#     sudo bash /opt/forex-scalper/scripts/deploy_vm.sh
 #
-# Then:  sudo bash /opt/forex-scalper/scripts/deploy_vm.sh
-#
-# This runs the new bot on the PRACTICE account (zero real-money risk). The
-# strategy did NOT pass the real-data validation gate — this is for observation.
+# It reuses the demo creds already on the box (/opt/forex-bot/.env), stops the
+# old bot, installs the new one, and starts it under systemd as YOUR user.
+# Practice account only — zero real-money risk. (Strategy is unvalidated: this
+# is observation, not a proven edge.)
 set -euo pipefail
-APP=/opt/forex-scalper
 
-echo "[1/5] Stopping the incumbent (one bot per account/token)..."
-sudo systemctl disable --now forex-bot 2>/dev/null && echo "  forex-bot stopped." \
+APP=/opt/forex-scalper
+ENVFILE=/etc/forex-scalper.env
+RUN_USER="${SUDO_USER:-root}"
+OLD_ENV=/opt/forex-bot/.env
+
+echo "[1/6] Stopping the old forex-bot (one bot per account/token)..."
+sudo systemctl disable --now forex-bot 2>/dev/null && echo "  old forex-bot stopped." \
   || echo "  forex-bot not found / already stopped (continuing)."
 
-echo "[2/5] Building venv + installing the package..."
+echo "[2/6] Reusing the demo creds already on this VM..."
+if [ ! -f "$ENVFILE" ]; then
+  if [ -f "$OLD_ENV" ]; then
+    sudo cp "$OLD_ENV" "$ENVFILE"
+    echo "  copied creds from $OLD_ENV -> $ENVFILE"
+  else
+    echo "  ERROR: $ENVFILE missing and $OLD_ENV not found. Create $ENVFILE first." >&2
+    exit 1
+  fi
+fi
+sudo chmod 600 "$ENVFILE"
+
+echo "[3/6] Building the Python environment + installing..."
 sudo python3 -m venv "$APP/.venv"
-sudo "$APP/.venv/bin/pip" install --upgrade pip
-sudo "$APP/.venv/bin/pip" install "$APP"
+sudo "$APP/.venv/bin/pip" install --upgrade pip -q
+sudo "$APP/.venv/bin/pip" install -q "$APP"
 
-echo "[3/5] Ensuring data dir (SQLite ledger lives here)..."
+echo "[4/6] Data dir + ownership (service runs as: $RUN_USER)..."
 sudo mkdir -p "$APP/data"
+sudo chown -R "$RUN_USER:$RUN_USER" "$APP"
 
-echo "[4/5] Installing + starting the systemd service..."
-sudo cp "$APP/systemd/forex-scalper.service" /etc/systemd/system/
+echo "[5/6] Writing the systemd service..."
+sudo tee /etc/systemd/system/forex-scalper.service >/dev/null <<UNIT
+[Unit]
+Description=forex-scalper live bot (DEMO / practice)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$RUN_USER
+WorkingDirectory=$APP
+EnvironmentFile=$ENVFILE
+ExecStart=$APP/.venv/bin/python -m forex_scalper.live --practice
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+echo "[6/6] Starting forex-scalper..."
 sudo systemctl daemon-reload
 sudo systemctl enable --now forex-scalper
-
-echo "[5/5] Status:"
-sudo systemctl --no-pager status forex-scalper | head -n 15
+sleep 4
+sudo systemctl --no-pager status forex-scalper | head -n 18
 echo
-echo "Done. Watch it live with:  journalctl -u forex-scalper -f"
-echo "Monitor from Telegram:     /status   /positions   (alerts fire on every fill)"
-echo "Note: entries only occur during the 12:00-16:00 UTC session window."
+echo "============================================================"
+echo "Done. The new bot is running on the DEMO account."
+echo "  Live logs:        journalctl -u forex-scalper -f"
+echo "  Telegram:         /status   /positions   (alerts on every fill)"
+echo "  Trades fire only during 12:00-16:00 UTC (London/NY overlap)."
+echo "  Roll back to old: sudo systemctl disable --now forex-scalper && sudo systemctl enable --now forex-bot"
+echo "============================================================"
