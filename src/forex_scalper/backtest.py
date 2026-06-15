@@ -13,16 +13,17 @@ Walk-forward: split the data by date into IN-SAMPLE (older) and OUT-OF-SAMPLE
 (newer) and report both side by side. If a setting shines in-sample but dies
 out-of-sample, it was memorised noise — exactly the per-pair-override / 7% trap.
 
-Run:  python backtest.py            # uses built-in synthetic data
-      python backtest.py mydata.csv 2025-04-01   # your CSV, split date
+Run:  python -m forex_scalper.backtest                         # built-in synthetic data
+      python -m forex_scalper.backtest --csv data.csv          # real CSV, auto split
+      python -m forex_scalper.backtest --help                  # all options
 CSV columns: time,open,high,low,close   (time = ISO 8601, UTC)
 """
 
 from __future__ import annotations
 
+import argparse
 import csv
 import logging
-import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -35,23 +36,52 @@ from forex_scalper.models import Candle, pip_size
 
 logging.basicConfig(level=logging.WARNING)  # quiet during replay
 
+# --------------------------------------------------------------------------- #
+# Per-instrument realistic spreads (pips) — typical OANDA during London/NY overlap
+# --------------------------------------------------------------------------- #
+DEFAULT_SPREADS_PIPS: dict[str, float] = {
+    "EUR_USD": 0.8,
+    "AUD_USD": 1.0,
+    "USD_JPY": 1.0,
+    "NZD_USD": 1.4,
+    "USD_CHF": 1.4,
+}
+DEFAULT_SPREAD_FALLBACK: float = 1.2
+
+
+def _resolve_spread(spread_pips: float | dict[str, float] | None, instrument: str) -> float:
+    """Return the effective spread in pips for *instrument* given the spread_pips argument."""
+    if isinstance(spread_pips, dict):
+        return spread_pips.get(instrument, DEFAULT_SPREAD_FALLBACK)
+    if isinstance(spread_pips, (int, float)):
+        return float(spread_pips)
+    # None -> use the module-level defaults
+    return DEFAULT_SPREADS_PIPS.get(instrument, DEFAULT_SPREAD_FALLBACK)
+
 
 # --------------------------------------------------------------------------- #
 # Backtest broker: deterministic fills + intrabar SL/TP resolution
 # --------------------------------------------------------------------------- #
 class BacktestBroker(Broker):
-    def __init__(self, pip_value: dict[str, float], spread_pips: float = 0.6):
+    def __init__(
+        self,
+        pip_value: dict[str, float],
+        spread_pips: float | dict[str, float] | None = None,
+        slippage_pips: float = 0.0,
+    ):
         self._pip_value = pip_value
-        self._spread = spread_pips
+        self._spread = spread_pips  # float | dict | None; resolved per call
+        self._slippage_pips = slippage_pips
+        self._bid: dict[str, float] = {}
+        self._ask: dict[str, float] = {}
         self._trades: dict[str, OpenTrade] = {}
         self._n = 0
         self.now: datetime = datetime.now(UTC)
         self.on_close = lambda trade, pnl, reason: None  # set by Backtester
 
     def set_price_from_close(self, instrument: str, close: float) -> None:
-        half = self._spread / 2 * pip_size(instrument)
-        self._bid = getattr(self, "_bid", {})
-        self._ask = getattr(self, "_ask", {})
+        spread = _resolve_spread(self._spread, instrument)
+        half = spread / 2 * pip_size(instrument)
         self._bid[instrument] = close - half
         self._ask[instrument] = close + half
 
@@ -60,7 +90,8 @@ class BacktestBroker(Broker):
 
     def place_market_order(self, instrument, units, stop, take_profit, setup="") -> OpenTrade | None:
         bid, ask = self.get_price(instrument)
-        fill = ask if units > 0 else bid
+        pip = pip_size(instrument)
+        fill = ask + self._slippage_pips * pip if units > 0 else bid - self._slippage_pips * pip
         self._n += 1
         t = OpenTrade(f"B{self._n}", instrument, units, fill, stop, take_profit, self.now, setup)
         self._trades[t.trade_id] = t
@@ -177,11 +208,22 @@ def report(name: str, trades: list[TradeRecord], start_bal: float) -> None:
 # Engine
 # --------------------------------------------------------------------------- #
 class Backtester:
-    def __init__(self, cfg: BotConfig, instrument: str, pip_value: float):
+    def __init__(
+        self,
+        cfg: BotConfig,
+        instrument: str,
+        pip_value: float,
+        spread_pips: float | dict[str, float] | None = None,
+        slippage_pips: float = 0.0,
+    ):
         self.cfg = cfg
         self.instrument = instrument
         self.pip_value = pip_value
-        self.broker = BacktestBroker({instrument: pip_value})
+        self.broker = BacktestBroker(
+            {instrument: pip_value},
+            spread_pips=spread_pips,
+            slippage_pips=slippage_pips,
+        )
         self.market = MarketState()
         self.market.set_pip_value(instrument, pip_value)
         self.bot = ScalpBot(cfg, self.market, self.broker)
@@ -249,34 +291,89 @@ def synth(days: int = 30, instrument: str = "EUR_USD") -> list[Candle]:
 
 
 def load_csv(path: str) -> list[Candle]:
-    out = []
-    with open(path) as f:
+    """Load 1M candles from CSV.
+
+    Tolerates trailing blank lines, Z-suffix timestamps, naive datetimes (attached UTC),
+    and rows with empty/missing fields. Sorts ascending by time.
+    """
+    out: list[Candle] = []
+    with open(path, newline="") as f:
         for row in csv.DictReader(f):
+            # Skip blank / incomplete rows
+            if not all(row.get(col, "").strip() for col in ("time", "open", "high", "low", "close")):
+                continue
+            time_str = row["time"].strip()
+            # Normalise Z suffix -> +00:00 so fromisoformat works on Python < 3.11
+            if time_str.endswith("Z"):
+                time_str = time_str[:-1] + "+00:00"
+            dt = datetime.fromisoformat(time_str)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
             out.append(Candle(
-                datetime.fromisoformat(row["time"]).replace(tzinfo=UTC),
-                float(row["open"]), float(row["high"]), float(row["low"]), float(row["close"])))
+                dt,
+                float(row["open"]),
+                float(row["high"]),
+                float(row["low"]),
+                float(row["close"]),
+            ))
+    out.sort(key=lambda c: c.time)
     return out
 
 
-def main():
-    instrument = "EUR_USD"
-    pip_value = 0.00013
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="python -m forex_scalper.backtest",
+        description="Walk-forward backtest for a single forex instrument.",
+    )
+    p.add_argument("--csv", metavar="PATH",
+                   help="Path to 1M CSV (time,open,high,low,close). "
+                        "Omit to use built-in synthetic data.")
+    p.add_argument("--instrument", default="EUR_USD", metavar="NAME",
+                   help="Instrument name, e.g. EUR_USD (default: EUR_USD)")
+    p.add_argument("--pip-value", type=float, default=0.00013, metavar="FLOAT",
+                   help="Account-currency value per pip per unit (default: 0.00013)")
+    p.add_argument("--cutoff", metavar="YYYY-MM-DD",
+                   help="IS/OOS split date. Default: 2/3 through the data.")
+    p.add_argument("--spread", type=float, default=None, metavar="FLOAT",
+                   help="Flat spread override in pips. Omit to use per-instrument defaults.")
+    p.add_argument("--slippage", type=float, default=0.0, metavar="FLOAT",
+                   help="Additional slippage per trade in pips (default: 0.0)")
+    return p
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = _build_parser().parse_args(argv)
+
+    instrument: str = args.instrument
+    pip_value: float = args.pip_value
+    spread_pips: float | None = args.spread   # None -> per-instrument map inside broker
+    slippage_pips: float = args.slippage
     cfg = BotConfig(starting_balance=10_000.0)
 
-    if len(sys.argv) >= 2:
-        candles = load_csv(sys.argv[1])
-        cutoff = datetime.fromisoformat(sys.argv[2]).replace(tzinfo=UTC) \
-            if len(sys.argv) >= 3 else candles[len(candles) * 2 // 3].time
+    if args.csv:
+        candles = load_csv(args.csv)
+        if args.cutoff:
+            cutoff = datetime.fromisoformat(args.cutoff).replace(tzinfo=UTC)
+        else:
+            cutoff = candles[len(candles) * 2 // 3].time
     else:
         candles = synth(30, instrument)
-        cutoff = candles[len(candles) * 2 // 3].time   # 2/3 in-sample, 1/3 out
+        if args.cutoff:
+            cutoff = datetime.fromisoformat(args.cutoff).replace(tzinfo=UTC)
+        else:
+            cutoff = candles[len(candles) * 2 // 3].time
 
     is_c, oos_c = split_by_date(candles, cutoff)
     print(f"data: {len(candles)} 1M candles | split @ {cutoff.date()} "
           f"({len(is_c)} IS / {len(oos_c)} OOS)")
 
-    bt_is = Backtester(cfg, instrument, pip_value); bt_is.run(is_c)
-    bt_oos = Backtester(cfg, instrument, pip_value); bt_oos.run(oos_c)
+    bt_is = Backtester(cfg, instrument, pip_value,
+                       spread_pips=spread_pips, slippage_pips=slippage_pips)
+    bt_is.run(is_c)
+
+    bt_oos = Backtester(cfg, instrument, pip_value,
+                        spread_pips=spread_pips, slippage_pips=slippage_pips)
+    bt_oos.run(oos_c)
 
     report("IN-SAMPLE", bt_is.records, cfg.starting_balance)
     report("OUT-OF-SAMPLE", bt_oos.records, cfg.starting_balance)
