@@ -88,7 +88,11 @@ UNIT
 
 echo "[8/8] Starting forex-scalper..."
 sudo systemctl daemon-reload
-sudo systemctl enable --now forex-scalper
+sudo systemctl enable forex-scalper
+# `restart` (not `enable --now`) so a RE-deploy actually reloads new code:
+# on an already-running service `enable --now` is a no-op and the old code
+# keeps running in memory.
+sudo systemctl restart forex-scalper
 sleep 4
 sudo systemctl --no-pager status forex-scalper | head -n 18
 echo
