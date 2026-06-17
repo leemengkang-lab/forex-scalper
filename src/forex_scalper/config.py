@@ -38,3 +38,7 @@ class BotConfig:
     starting_balance: float = 10_000.0
     journal_path: str = "journal.csv"
     live: bool = False               # MUST be flipped on purpose to trade real money
+
+    # Instruments whose detected setups are taken on the OPPOSITE side
+    # (buy<->sell). Empty = off. Enable EUR/USD inverse mode with ["EUR_USD"].
+    invert_instruments: list[str] = field(default_factory=list)
