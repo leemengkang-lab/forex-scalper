@@ -36,7 +36,6 @@ from forex_scalper.calendar_feed import load_into_session
 from forex_scalper.config import BotConfig
 from forex_scalper.data import MarketState
 from forex_scalper.execution import OandaBroker, PaperBroker  # noqa: F401 (re-exported for tests)
-from forex_scalper.inversion import parse_invert_instruments
 from forex_scalper.live_engine import LiveEngine
 from forex_scalper.notifier import ConsoleNotifier, Notifier
 from forex_scalper.persistence import Repository
@@ -461,13 +460,7 @@ def main() -> None:
     summary = _probe.account_summary()
     account_ccy = summary.currency
 
-    # INVERT_INSTRUMENTS (comma-separated, e.g. "EUR_USD") flips those pairs to
-    # the opposite side. Empty/unset = normal trading. See docs spec
-    # 2026-06-18-eurusd-inverse-mode-design.md.
-    invert_instruments = parse_invert_instruments(os.environ.get("INVERT_INSTRUMENTS"))
-    cfg = BotConfig(invert_instruments=invert_instruments)
-    if invert_instruments:
-        log.warning("INVERSE MODE active for: %s", ", ".join(invert_instruments))
+    cfg = BotConfig()
     tradeable = cfg.instruments
 
     Path("data").mkdir(exist_ok=True)

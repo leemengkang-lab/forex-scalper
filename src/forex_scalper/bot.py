@@ -22,7 +22,6 @@ from forex_scalper import setups as setups_mod
 from forex_scalper.config import BotConfig
 from forex_scalper.data import MarketState
 from forex_scalper.execution import Broker
-from forex_scalper.inversion import maybe_invert
 from forex_scalper.journal import Journal, JournalRow
 from forex_scalper.models import SetupSignal, pip_size
 from forex_scalper.notifier import ConsoleNotifier, Notifier
@@ -61,7 +60,6 @@ class ScalpBot:
             sig = setups_mod.detect(self.market, instrument, bias, regime, self.cfg.setup)  # 5)
             if sig is None:
                 return
-            sig = maybe_invert(sig, self.cfg.invert_instruments)  # opposite side if configured
 
             self._try_enter(sig, bias, regime, now)      # 6-7) risk + execute
         except Exception as e:                           # connectivity guard
