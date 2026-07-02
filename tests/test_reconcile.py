@@ -149,9 +149,11 @@ def test_startup_rebuilds_risk_from_broker(tmp_path):  # type: ignore[no-untyped
     repo.close()
 
 
-def test_startup_restores_halt(tmp_path):  # type: ignore[no-untyped-def]
+def test_startup_restores_manual_halt(tmp_path):  # type: ignore[no-untyped-def]
+    # A MANUAL (operator) halt is sticky across restarts until /resume.
+    # (Daily-loss halts expire on a new day — see test_halt_day_scoping.py.)
     repo, risk = _setup(tmp_path)
-    repo.set_halt("prior daily limit")
+    repo.set_halt("manual halt via telegram")
 
     broker = FakeBroker([])
     rec = PositionReconciler(repo, risk, get_closed_pnl=lambda tid: None)

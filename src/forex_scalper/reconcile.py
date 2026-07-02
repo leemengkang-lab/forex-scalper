@@ -24,6 +24,11 @@ logger = logging.getLogger("reconcile")
 GetClosedPnl = Callable[[str], "float | None"]
 
 
+def _trading_day(now: datetime) -> str:
+    """UTC calendar day (YYYY-MM-DD) — matches day_snapshots / run_live keys."""
+    return now.astimezone(UTC).strftime("%Y-%m-%d")
+
+
 # ---------------------------------------------------------------------------
 # Structural protocols (avoid importing concrete classes as type annotations,
 # since we consume repo/risk as duck-typed objects in tests)
@@ -43,7 +48,10 @@ class _Repo(Protocol):
         closed_at: datetime,
     ) -> None: ...
     def is_halted(self) -> bool: ...
-    def set_halt(self, reason: str) -> None: ...
+    def set_halt(self, reason: str, day: str | None = None) -> None: ...
+    def clear_halt(self) -> None: ...
+    def halt_reason(self) -> str | None: ...
+    def halt_day(self) -> str | None: ...
 
 
 @runtime_checkable
@@ -134,7 +142,9 @@ class PositionReconciler:
             )
 
         if self._risk.halted and not self._repo.is_halted():
-            self._repo.set_halt("daily loss limit reached")
+            self._repo.set_halt(
+                "daily loss limit reached", day=_trading_day(now)
+            )
 
     # ------------------------------------------------------------------
     # Public API
@@ -184,10 +194,27 @@ class PositionReconciler:
         now = now or self._now_utc()
         summary = ReconcileSummary()
 
-        # Step 1: restore halt flag
+        # Step 1: restore halt flag — but a DAILY-loss halt EXPIRES on a new
+        # trading day. Restoring it verbatim would let a prior-day halt brick
+        # the bot across restarts forever (the daily kill switch is meant to
+        # reset each day). A manual halt (reason contains "manual") stays
+        # sticky until /resume; a daily halt with no recorded day is legacy and
+        # treated as expired.
         if self._repo.is_halted():
-            self._risk.halted = True
-            summary.halt_restored = True
+            reason = self._repo.halt_reason() or ""
+            halt_day = self._repo.halt_day()
+            today = _trading_day(now)
+            is_manual = "manual" in reason.lower()
+            expired_daily = (not is_manual) and (halt_day is None or halt_day < today)
+            if expired_daily:
+                logger.info(
+                    "reconcile: expiring stale daily-loss halt (halt_day=%s < today=%s)",
+                    halt_day, today,
+                )
+                self._repo.clear_halt()
+            else:
+                self._risk.halted = True
+                summary.halt_restored = True
 
         # Snapshot DB open trades BEFORE any closes (to preserve risk_amounts for rebuild)
         db_trades: list[dict[str, Any]] = self._repo.open_trades()

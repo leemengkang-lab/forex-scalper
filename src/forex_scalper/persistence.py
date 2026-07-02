@@ -190,7 +190,7 @@ class Repository:
     # Halt flag
     # ------------------------------------------------------------------
 
-    def set_halt(self, reason: str) -> None:
+    def set_halt(self, reason: str, day: str | None = None) -> None:
         self._conn.execute(
             "INSERT OR REPLACE INTO state (key, value) VALUES ('halted', '1')"
         )
@@ -198,12 +198,22 @@ class Repository:
             "INSERT OR REPLACE INTO state (key, value) VALUES ('halt_reason', ?)",
             (reason,),
         )
+        # A daily-loss halt records the trading day it was armed, so it can
+        # expire on a new day at startup. A manual halt passes no day (sticky).
+        if day is not None:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO state (key, value) VALUES ('halt_day', ?)",
+                (day,),
+            )
+        else:
+            self._conn.execute("DELETE FROM state WHERE key = 'halt_day'")
 
     def clear_halt(self) -> None:
         self._conn.execute(
             "INSERT OR REPLACE INTO state (key, value) VALUES ('halted', '0')"
         )
         self._conn.execute("DELETE FROM state WHERE key = 'halt_reason'")
+        self._conn.execute("DELETE FROM state WHERE key = 'halt_day'")
 
     def is_halted(self) -> bool:
         row = self._conn.execute(
@@ -214,6 +224,13 @@ class Repository:
     def halt_reason(self) -> str | None:
         row = self._conn.execute(
             "SELECT value FROM state WHERE key = 'halt_reason'"
+        ).fetchone()
+        return row["value"] if row is not None else None
+
+    def halt_day(self) -> str | None:
+        """Trading day (YYYY-MM-DD) a daily-loss halt was armed, or None."""
+        row = self._conn.execute(
+            "SELECT value FROM state WHERE key = 'halt_day'"
         ).fetchone()
         return row["value"] if row is not None else None
 
