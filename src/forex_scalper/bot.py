@@ -23,7 +23,7 @@ from forex_scalper.config import BotConfig
 from forex_scalper.data import MarketState
 from forex_scalper.execution import Broker
 from forex_scalper.journal import Journal, JournalRow
-from forex_scalper.models import SetupSignal, pip_size
+from forex_scalper.models import Bias, SetupSignal, pip_size
 from forex_scalper.notifier import ConsoleNotifier, Notifier
 from forex_scalper.persistence import Repository
 from forex_scalper.risk_manager import RiskManager, TradeSignal
@@ -86,6 +86,13 @@ class ScalpBot:
             stop=sig.stop_price, spread_pips=sig.spread_pips, atr_pips=round(atr_pips, 1),
             note=sig.note,
         )
+
+        # strict bias alignment (belt-and-suspenders; inversion removed, Setup B off)
+        if (bias == Bias.LONG_ONLY and sig.direction < 0) or \
+           (bias == Bias.SHORT_ONLY and sig.direction > 0):
+            base.event = "reject"; base.exit_reason = "bias_mismatch"
+            self.journal.log(base)
+            return
 
         if not decision.approved:
             base.event = "reject"; base.exit_reason = decision.reason.value
