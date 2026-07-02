@@ -34,7 +34,6 @@ class BotConfig:
     session: SessionConfig = field(default_factory=SessionConfig)
     trade: TradeManagerConfig = field(default_factory=TradeManagerConfig)
 
-    tp_atr_mult: float = 2.5         # take-profit distance in ATR (your finding)
     starting_balance: float = 10_000.0
     journal_path: str = "journal.csv"
     live: bool = False               # MUST be flipped on purpose to trade real money

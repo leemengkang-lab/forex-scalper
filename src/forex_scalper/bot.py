@@ -75,7 +75,8 @@ class ScalpBot:
         tsig = TradeSignal(
             instrument=sig.instrument, direction=sig.direction,
             entry_price=sig.entry_price, stop_price=sig.stop_price,
-            pip_value_per_unit=pv, spread_pips=sig.spread_pips, setup=sig.setup,
+            pip_value_per_unit=pv, atr_pips=atr_pips,
+            spread_pips=sig.spread_pips, setup=sig.setup,
         )
         decision = self.risk.evaluate(tsig, now)
 
@@ -91,9 +92,7 @@ class ScalpBot:
             self.journal.log(base)
             return
 
-        # take-profit from ATR (your 2.5x finding), in the trade direction
-        pip = pip_size(sig.instrument)
-        tp = sig.entry_price + sig.direction * self.cfg.tp_atr_mult * (atr or 0.0)
+        tp = decision.take_profit          # risk_manager owns TP (1.3x the stop)
 
         trade = self.broker.place_market_order(
             sig.instrument, decision.units, decision.stop_price, round(tp, 5), sig.setup)

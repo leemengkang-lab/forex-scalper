@@ -50,6 +50,9 @@ class RiskConfig:
     min_stop_pips_default: float = 10.0 # floor for non-JPY (your backtest finding)
     min_stop_pips_jpy: float = 15.0     # floor for JPY pairs
     max_spread_pips: float = 1.5        # skip entries when spread is wider
+    stop_atr_mult: float = 1.5          # stop distance = this * 1M ATR (pips)
+    tp_r_multiple: float = 1.3          # take-profit = this * stop (>=1 -> paid >= risked)
+    min_atr_pips: float = 2.5           # skip entries when 1M ATR is below this (too dead)
     derisk_after_losses: int = 3        # consecutive losses -> shrink size
     derisk_factor: float = 0.5          # ...to half, until a winner resets it
     day_rollover_hour_utc: int = 0      # when the trading "day" resets (UTC)
@@ -80,6 +83,7 @@ class TradeSignal:
     entry_price: float
     stop_price: float       # where the setup wants the stop (structural)
     pip_value_per_unit: float  # ACCOUNT-ccy value of 1 pip per 1 unit (caller computes)
+    atr_pips: float = 0.0      # 1M ATR in pips (caller computes); drives stop + min-vol veto
     spread_pips: float = 0.0
     setup: str = ""
 
@@ -100,6 +104,7 @@ class Reject(Enum):
     GROSS_HEAT = "would exceed total open-risk cap"
     FACTOR_EXPOSURE = "would exceed correlated (USD) exposure cap"
     SPREAD = "spread too wide to enter"
+    LOW_VOLATILITY = "1M ATR below minimum; market too quiet to scalp"
     BAD_SIZING = "computed size was not positive"
 
 
@@ -110,6 +115,7 @@ class RiskDecision:
     units: int = 0
     stop_price: float = 0.0   # may be widened to respect the min floor
     stop_pips: float = 0.0
+    take_profit: float = 0.0
     risk_amount: float = 0.0
     note: str = ""
 
@@ -223,18 +229,22 @@ class RiskManager:
         # 2) cheap gates
         if signal.spread_pips > self.cfg.max_spread_pips:
             return deny(Reject.SPREAD, f"spread {signal.spread_pips:.2f} > {self.cfg.max_spread_pips}")
+        if signal.atr_pips < self.cfg.min_atr_pips:
+            return deny(Reject.LOW_VOLATILITY,
+                        f"atr {signal.atr_pips:.2f}p < {self.cfg.min_atr_pips}p")
         if any(p.instrument == signal.instrument for p in self.open_positions):
             return deny(Reject.DUPLICATE)
         if len(self.open_positions) >= self.cfg.max_concurrent_positions:
             return deny(Reject.MAX_POSITIONS)
 
-        # 3) stop distance with the minimum floor (widen if too tight)
+        # 3) ATR-based stop (floored) and a take-profit that is always >= the stop
         psize = pip_size(signal.instrument)
         floor = self.cfg.min_stop_pips_jpy if signal.instrument.upper().endswith("JPY") \
             else self.cfg.min_stop_pips_default
-        raw_pips = abs(signal.entry_price - signal.stop_price) / psize
-        stop_pips = max(raw_pips, floor)
+        stop_pips = max(self.cfg.stop_atr_mult * signal.atr_pips, floor)
+        tp_pips = self.cfg.tp_r_multiple * stop_pips
         stop_price = signal.entry_price - signal.direction * stop_pips * psize
+        take_profit = signal.entry_price + signal.direction * tp_pips * psize
 
         # 4) risk amount (with loss-streak de-risking)
         risk_amount = self.cfg.risk_per_trade * self.balance
@@ -264,8 +274,8 @@ class RiskManager:
             return deny(Reject.BAD_SIZING, "units rounded to 0 (risk too small / stop too wide)")
 
         note = ""
-        if stop_pips > raw_pips:
-            note = f"stop widened to {floor:.0f}-pip floor"
+        if self.cfg.stop_atr_mult * signal.atr_pips < floor:
+            note = f"stop at {floor:.0f}-pip floor"
         if self._consecutive_losses >= self.cfg.derisk_after_losses:
             note = (note + "; " if note else "") + \
                    f"de-risked x{self.cfg.derisk_factor} after {self._consecutive_losses} losses"
@@ -276,6 +286,7 @@ class RiskManager:
             units=units * signal.direction,   # signed: OANDA buys with +, sells with -
             stop_price=round(stop_price, 5),
             stop_pips=round(stop_pips, 1),
+            take_profit=round(take_profit, 5),
             risk_amount=round(risk_amount, 2),
             note=note,
         )
@@ -308,23 +319,23 @@ if __name__ == "__main__":
 
     # 1) clean long EUR/USD -> short USD
     show("EUR_USD long (entry 1.0850, stop 1.0838 = 12p)",
-         TradeSignal("EUR_USD", +1, 1.0850, 1.0838, PV_NONJPY, spread_pips=0.4, setup="A"))
+         TradeSignal("EUR_USD", +1, 1.0850, 1.0838, PV_NONJPY, atr_pips=8.0, spread_pips=0.4, setup="A"))
 
     # 2) AUD/USD long -> also short USD. Adds to the same USD bet.
     show("AUD_USD long (adds to short-USD exposure)",
-         TradeSignal("AUD_USD", +1, 0.6600, 0.6588, PV_NONJPY, spread_pips=0.6, setup="A"))
+         TradeSignal("AUD_USD", +1, 0.6600, 0.6588, PV_NONJPY, atr_pips=8.0, spread_pips=0.6, setup="A"))
 
     # 3) NZD/USD long -> would push net short-USD past the 2% factor cap: REJECTED
     show("NZD_USD long (correlated USD bet -> hits factor cap)",
-         TradeSignal("NZD_USD", +1, 0.6020, 0.6010, PV_NONJPY, spread_pips=0.8, setup="A"))
+         TradeSignal("NZD_USD", +1, 0.6020, 0.6010, PV_NONJPY, atr_pips=8.0, spread_pips=0.8, setup="A"))
 
     # 4) USD/JPY long -> LONG USD, offsets the net exposure: APPROVED
     show("USD_JPY long (long USD -> offsets, allowed)",
-         TradeSignal("USD_JPY", +1, 156.40, 156.10, PV_JPY, spread_pips=0.7, setup="B"))
+         TradeSignal("USD_JPY", +1, 156.40, 156.10, PV_JPY, atr_pips=20.0, spread_pips=0.7, setup="B"))
 
     # 5) wide spread -> skipped
     show("GBP_USD long but spread 2.1p (> cap)",
-         TradeSignal("GBP_USD", +1, 1.2730, 1.2718, PV_NONJPY, spread_pips=2.1, setup="A"))
+         TradeSignal("GBP_USD", +1, 1.2730, 1.2718, PV_NONJPY, atr_pips=8.0, spread_pips=2.1, setup="A"))
 
     # 6) simulate a losing day to trip the kill switch
     print("\n--- simulating closed losers to arm the daily kill switch ---")
@@ -334,4 +345,4 @@ if __name__ == "__main__":
     print(f"daily P&L={rm.daily_pnl:.0f}  halted={rm.halted}")
 
     show("USD_CHF long after limit hit",
-         TradeSignal("USD_CHF", +1, 0.8900, 0.8888, PV_NONJPY, spread_pips=0.5, setup="A"))
+         TradeSignal("USD_CHF", +1, 0.8900, 0.8888, PV_NONJPY, atr_pips=8.0, spread_pips=0.5, setup="A"))
