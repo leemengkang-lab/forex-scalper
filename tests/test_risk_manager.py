@@ -36,6 +36,7 @@ def test_take_profit_is_1_3x_stop_short():
     d = rm.evaluate(TradeSignal("EUR_USD", -1, 1.0850, 1.0862, PV, atr_pips=ATR, spread_pips=0.4))
     assert d.take_profit < 1.0850       # tp below entry for a short
     assert d.stop_price > 1.0850        # stop above entry for a short
+    assert abs((1.0850 - d.take_profit) / 0.0001 - 1.3 * d.stop_pips) < 1e-6
 
 
 def test_low_volatility_rejected():
