@@ -106,43 +106,20 @@ docker logs -f forex-scalper
 
 ---
 
-## Inverse (reversal) mode — EUR/USD (added 2026-06-18)
+## Bias-aligned baseline (added 2026-06-18)
 
-Inverse mode takes the **opposite** side of every detected setup (buy↔sell) for
-the listed instruments. It is controlled by the `INVERT_INSTRUMENTS` env var
-(comma-separated, e.g. `EUR_USD`). Empty/unset = normal trading. It is independent
-of `OANDA_ENVIRONMENT`; it does **not** turn on real-money trading.
+Inverse mode was removed. The bot now runs Setup A only, strictly bias-aligned,
+with a corrected reward:risk and a minimum-volatility filter:
 
-Design/plan: `docs/superpowers/specs/2026-06-18-eurusd-inverse-mode-design.md`,
-`docs/superpowers/plans/2026-06-18-eurusd-inverse-mode.md`.
+- Stop = `max(1.5 * 1M-ATR, floor)` (floor 10 pips non-JPY / 15 JPY).
+- Take-profit = `1.3 * stop` — always paid more than risked.
+- No trade when 1M ATR < 2.5 pips (`RiskConfig.min_atr_pips`).
+- Setup B (round-number fade) is disabled (`SetupConfig.enable_setup_b=False`).
+- Every close is journalled with pnl + exit_reason
+  (time_stop / watchdog_no_stop / broker_close).
 
-> **Caveat:** flipping a strategy does not guarantee profit — the spread is paid
-> on the inverted side too. Treat the demo soak as the test of whether the flip
-> has edge before any live cutover.
-
-### Deploy / update inverse mode on the VM (DEMO / practice, $0 risk)
-
-```bash
-# 1. Pull the latest code (the VM deploys from /opt/forex-scalper)
-cd /opt/forex-scalper
-sudo git fetch origin && sudo git checkout buildout && sudo git pull
-
-# 2. Enable inverse mode for EUR/USD. The deploy script does NOT overwrite an
-#    existing /etc/forex-scalper.env, so add the line yourself:
-echo 'INVERT_INSTRUMENTS=EUR_USD' | sudo tee -a /etc/forex-scalper.env
-
-# 3. Re-run the deploy (reinstalls the package + restarts the service)
-sudo bash /opt/forex-scalper/scripts/deploy_vm.sh
-
-# 4. Confirm it is active
-journalctl -u forex-scalper -n 50 --no-pager | grep -i "INVERSE MODE"
-#   -> "INVERSE MODE active for: EUR_USD"
-```
-
-### Turn it off
-
-Remove (or blank) the `INVERT_INSTRUMENTS` line in `/etc/forex-scalper.env` and
-restart: `sudo systemctl restart forex-scalper`. No code change or redeploy needed.
-
-> Trades only fire 12:00–16:00 UTC (London/NY overlap); a quiet log outside that
-> window is normal. Monitor via Telegram `/status` and `/positions`.
+Knobs live in `RiskConfig` (`stop_atr_mult`, `tp_r_multiple`, `min_atr_pips`) and
+`SetupConfig.enable_setup_b`. Deploy: pull `buildout`, `sudo bash
+/opt/forex-scalper/scripts/deploy_vm.sh` (now restarts on redeploy). Verify:
+`journalctl -u forex-scalper -n 60 --no-pager | grep -iE "live runner started|reconciled"`.
+Let it run 2–3 weeks, then analyse `journal.csv` (opens + closes with pnl).
