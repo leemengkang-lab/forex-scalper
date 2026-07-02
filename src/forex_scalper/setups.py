@@ -32,6 +32,7 @@ class SetupConfig:
     level_tol_atr: float = 0.30        # how near a level counts as a test
     round_step: float = 0.0050         # 50-pip round numbers for non-JPY
     round_step_jpy: float = 0.50
+    enable_setup_b: bool = False       # round-number fade; off until independently proven
 
 
 def detect(market: MarketState, instrument: str, bias: Bias, regime: Regime,
@@ -40,7 +41,7 @@ def detect(market: MarketState, instrument: str, bias: Bias, regime: Regime,
         sig = _pullback(market, instrument, bias, cfg)
         if sig:
             return sig
-    if regime == Regime.RANGE:
+    if cfg.enable_setup_b and regime == Regime.RANGE:
         sig = _level_rejection(market, instrument, bias, cfg)
         if sig:
             return sig
