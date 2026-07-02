@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from forex_scalper.execution import Broker, OpenTrade
 from forex_scalper.models import pip_size
@@ -35,9 +36,10 @@ class TradeManagerConfig:
 
 
 class TradeManager:
-    def __init__(self, cfg: TradeManagerConfig, broker: Broker):
+    def __init__(self, cfg: TradeManagerConfig, broker: Broker, close_reasons: Any | None = None):
         self.cfg = cfg
         self.broker = broker
+        self.close_reasons = close_reasons
 
     def manage(self, now: datetime | None = None) -> None:
         now = now or datetime.now(UTC)
@@ -54,6 +56,8 @@ class TradeManager:
         # time stop
         if age_min >= self.cfg.max_minutes and gain_pips < self.cfg.min_progress_pips:
             logger.info("Time stop %s (%.1f min, %.1f pips)", t.trade_id, age_min, gain_pips)
+            if self.close_reasons is not None:
+                self.close_reasons.mark(t.trade_id, "time_stop")
             self.broker.close_trade(t.trade_id)
             return
 

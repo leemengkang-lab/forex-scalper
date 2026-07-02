@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from forex_scalper import bias as bias_mod
 from forex_scalper import regime as regime_mod
 from forex_scalper import setups as setups_mod
+from forex_scalper.close_reasons import CloseReasons
 from forex_scalper.config import BotConfig
 from forex_scalper.data import MarketState
 from forex_scalper.execution import Broker
@@ -43,7 +44,8 @@ class ScalpBot:
         self.repo = repo
         self.journal = Journal(cfg.journal_path)
         self.session = SessionFilter(cfg.session)
-        self.trades = TradeManager(cfg.trade, broker)
+        self.close_reasons = CloseReasons()
+        self.trades = TradeManager(cfg.trade, broker, close_reasons=self.close_reasons)
         self.risk = RiskManager(cfg.risk, cfg.starting_balance, cfg.usd_sign)
 
     # ---- called by the run loop whenever a 1M candle closes ------------- #

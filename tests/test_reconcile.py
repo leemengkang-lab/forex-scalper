@@ -221,3 +221,43 @@ def test_startup_rebuilds_correct_direction(tmp_path):  # type: ignore[no-untype
     assert pos.direction == -1
     assert abs(pos.risk_amount - 80.0) < 1e-9
     repo.close()
+
+
+def test_sync_journals_close_with_reason(tmp_path):
+    from datetime import UTC, datetime
+
+    from forex_scalper.close_reasons import CloseReasons
+    from forex_scalper.journal import Journal
+    from forex_scalper.reconcile import PositionReconciler
+
+    class _Repo:
+        def __init__(self):
+            self._open = [{"trade_id": "T1", "instrument": "EUR_USD", "risk_amount": 100.0}]
+        def open_trades(self): return list(self._open)
+        def record_close(self, *a, **k): self._open = []
+        def is_halted(self): return False
+        def set_halt(self, reason): pass
+
+    class _Risk:
+        halted = False
+        open_positions: list = []  # noqa: RUF012
+        def close_position(self, *a, **k): pass
+        def register_fill(self, *a, **k): pass
+
+    class _Broker:
+        def open_trades(self): return []      # T1 closed at broker
+
+    jrnl = Journal(str(tmp_path / "j.csv"))
+    cr = CloseReasons()
+    cr.mark("T1", "time_stop")
+    rec = PositionReconciler(_Repo(), _Risk(), get_closed_pnl=lambda _t: -7.5,
+                             journal=jrnl, close_reasons=cr)
+    rec.sync(_Broker(), now=datetime(2025, 1, 6, tzinfo=UTC))
+
+    with open(str(tmp_path / "j.csv")) as fh:
+        rows = list(__import__("csv").DictReader(fh))
+    close_rows = [r for r in rows if r["event"] == "close"]
+    assert len(close_rows) == 1
+    assert close_rows[0]["instrument"] == "EUR_USD"
+    assert close_rows[0]["exit_reason"] == "time_stop"
+    assert float(close_rows[0]["pnl"]) == -7.5

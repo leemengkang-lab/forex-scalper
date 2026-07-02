@@ -145,6 +145,7 @@ async def _watchdog(
     notifier: Notifier,
     *,
     interval: float = 60.0,
+    close_reasons: Any | None = None,
 ) -> None:
     """Every *interval* seconds, ensure every open trade has a valid stop-loss.
 
@@ -155,6 +156,8 @@ async def _watchdog(
         try:
             for t in broker.open_trades():
                 if t.stop_price is None or t.stop_price <= 0 or math.isnan(t.stop_price):
+                    if close_reasons is not None:
+                        close_reasons.mark(t.trade_id, "watchdog_no_stop")
                     broker.close_trade(t.trade_id)
                     notifier.send(
                         f"EMERGENCY: {t.trade_id} had no stop; closed by watchdog"
@@ -287,7 +290,8 @@ async def run_live(
     # --- reconciler -----------------------------------------------------------
     get_closed_pnl = getattr(broker, "closed_trade_pnl", lambda _tid: None)
     reconciler = reconciler or PositionReconciler(
-        repo, bot.risk, get_closed_pnl=get_closed_pnl
+        repo, bot.risk, get_closed_pnl=get_closed_pnl,
+        journal=bot.journal, close_reasons=bot.close_reasons,
     )
 
     # --- engine ---------------------------------------------------------------
@@ -352,7 +356,8 @@ async def run_live(
     tasks: list[asyncio.Task[object]] = [
         asyncio.create_task(_consume(queue, engine, notifier), name="consumer"),
         asyncio.create_task(
-            _watchdog(broker, notifier, interval=watchdog_interval), name="watchdog"
+            _watchdog(broker, notifier, interval=watchdog_interval,
+                      close_reasons=bot.close_reasons), name="watchdog"
         ),
     ]
     if max_runtime_seconds is not None:

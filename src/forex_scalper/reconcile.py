@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 
+from forex_scalper.journal import JournalRow
+
 logger = logging.getLogger("reconcile")
 
 # Callable that returns realized P&L for a closed trade, or None if unknown.
@@ -78,18 +80,24 @@ class PositionReconciler:
         *,
         get_closed_pnl: GetClosedPnl,
         now_utc: Callable[[], datetime] = lambda: datetime.now(UTC),
+        journal: Any | None = None,
+        close_reasons: Any | None = None,
     ) -> None:
         self._repo = repo
         self._risk = risk
         self._get_closed_pnl = get_closed_pnl
         self._now_utc = now_utc
+        self._journal = journal
+        self._close_reasons = close_reasons
 
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _close_one(self, trade_id: str, instrument: str, now: datetime) -> None:
-        """Fetch P&L (with fallback), route to risk, and persist record_close."""
+    def _close_one(
+        self, trade_id: str, instrument: str, now: datetime, default_reason: str = "broker_close"
+    ) -> None:
+        """Fetch P&L (with fallback), route to risk, persist + journal the close."""
         pnl = self._get_closed_pnl(trade_id)
         if pnl is None:
             logger.warning(
@@ -98,14 +106,31 @@ class PositionReconciler:
             )
             pnl = 0.0
 
+        reason = (
+            self._close_reasons.take(trade_id, default_reason)
+            if self._close_reasons is not None
+            else default_reason
+        )
+
         self._risk.close_position(instrument, pnl, now=now)
         self._repo.record_close(
             trade_id,
             exit_price=0.0,
             pnl=pnl,
-            reason="broker_close",
+            reason=reason,
             closed_at=now,
         )
+
+        if self._journal is not None:
+            self._journal.log(
+                JournalRow(
+                    event="close",
+                    instrument=instrument,
+                    pnl=round(pnl, 2),
+                    exit=0.0,
+                    exit_reason=reason,
+                )
+            )
 
         if self._risk.halted and not self._repo.is_halted():
             self._repo.set_halt("daily loss limit reached")
@@ -176,7 +201,7 @@ class PositionReconciler:
         # Step 3: orphan_in_db — closed while bot was down
         for tid in db_ids - broker_ids:
             row = db_by_id[tid]
-            self._close_one(tid, row["instrument"], now)
+            self._close_one(tid, row["instrument"], now, default_reason="broker_close_startup")
             summary.closed.append(tid)
 
         # Step 4: orphan_in_broker — at broker but missing from DB
