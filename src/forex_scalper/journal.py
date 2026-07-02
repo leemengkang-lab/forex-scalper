@@ -18,6 +18,7 @@ FIELDS = [
     "ts", "event", "instrument", "setup", "direction", "bias", "regime",
     "entry", "stop", "take_profit", "stop_pips", "units", "risk_amount",
     "spread_pips", "atr_pips", "exit", "pnl", "exit_reason", "note",
+    "trade_id",
 ]
 
 
@@ -42,6 +43,7 @@ class JournalRow:
     pnl: float = 0.0
     exit_reason: str = ""
     note: str = ""
+    trade_id: str = ""
 
 
 class Journal:

@@ -261,3 +261,4 @@ def test_sync_journals_close_with_reason(tmp_path):
     assert close_rows[0]["instrument"] == "EUR_USD"
     assert close_rows[0]["exit_reason"] == "time_stop"
     assert float(close_rows[0]["pnl"]) == -7.5
+    assert close_rows[0]["trade_id"] == "T1"

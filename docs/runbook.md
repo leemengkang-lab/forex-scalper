@@ -123,3 +123,10 @@ Knobs live in `RiskConfig` (`stop_atr_mult`, `tp_r_multiple`, `min_atr_pips`) an
 /opt/forex-scalper/scripts/deploy_vm.sh` (now restarts on redeploy). Verify:
 `journalctl -u forex-scalper -n 60 --no-pager | grep -iE "live runner started|reconciled"`.
 Let it run 2–3 weeks, then analyse `journal.csv` (opens + closes with pnl).
+
+**Note — synthetic backtest produces no trades (expected):** With Setup B disabled
+and Setup A inert on the built-in `synth()` data, running `python -m
+forex_scalper.backtest` produces zero trades. This is not a bug — the synthetic
+candles never satisfy the bias + volatility filters. Real validation comes from
+(a) the live demo soak on the VM and (b) walk-forward on real OANDA CSVs fetched
+via `scripts/fetch_history.py`.

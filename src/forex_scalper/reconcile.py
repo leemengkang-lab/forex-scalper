@@ -129,6 +129,7 @@ class PositionReconciler:
                     pnl=round(pnl, 2),
                     exit=0.0,
                     exit_reason=reason,
+                    trade_id=trade_id,
                 )
             )
 

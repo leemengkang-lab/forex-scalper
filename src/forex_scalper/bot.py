@@ -118,6 +118,7 @@ class ScalpBot:
         base.stop = decision.stop_price; base.take_profit = round(tp, 5)
         base.stop_pips = decision.stop_pips; base.units = decision.units
         base.risk_amount = decision.risk_amount
+        base.trade_id = trade.trade_id
         self.journal.log(base)
         self.notifier.send(
             f"✅ {sig.setup} {sig.instrument} {'LONG' if sig.direction>0 else 'SHORT'} "
